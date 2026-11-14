@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northstar · Study</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%230F3E17%22/%3E%3Cg%20transform%3D%22translate%284%204%29%22%20color%3D%22%23B1DBB8%22%3E%3Cpath%20d%3D%22M12%202.5%2015.4%2012H8.6zM13.7%2012a1.7%201.7%200%200%200-3.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22/%3E%3Cpath%20d%3D%22M8.6%2012h6.8L12%2021.5zM10.3%2012a1.7%201.7%200%200%200%203.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22%20opacity%3D%22.45%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<main id="page">
+  <div class="loading-page"><div class="brand-mark" data-mark></div>Reading the study record…</div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="assets/app.js"></script>
+<script>
+  mountChrome('find');
+  $('[data-mark]').innerHTML = I.mark;
+
+  const id = (new URLSearchParams(location.search).get('id') ?? '').toUpperCase().trim();
+  const me = (() => { const s = loadSearch(); return s.lat !== '' && s.lat != null ? { lat: +s.lat, lon: +s.lon, label: s.loc } : null; })();
+  const ASK_KEY = `northstar:ask:${id}`;
+  const CHECK_KEY = `northstar:check:${id}`;
+  const ME_KEY = 'northstar:me';
+  const answers = loadAnswers();
+  const profile = (() => { try { return JSON.parse(localStorage.getItem(ME_KEY)) ?? {}; } catch { return {}; } })();
+  profile.city ??= loadSearch().loc ?? '';
+  profile.extras ??= ['visits', 'cost'];
+
+  /* ---------- Plain-language study design ---------- */
+  function designLines(p) {
+    const d = p.designModule ?? {}, info = d.designInfo ?? {};
+    const arms = p.armsInterventionsModule?.armGroups ?? [];
+    const out = [];
+    if (d.studyType === 'OBSERVATIONAL') {
+      out.push([I.eye, 'You won’t be given a new treatment. Researchers observe and record what happens during your usual care.']);
+    } else if (d.studyType === 'EXPANDED_ACCESS') {
+      out.push([I.pill, 'This is expanded access: a way to get an investigational treatment outside a regular trial, usually when other options have run out.']);
+    }
+    if (info.allocation === 'RANDOMIZED') out.push([I.shuffle, 'You’ll be placed in a group by chance, like a coin flip. You won’t get to choose. This is called being randomized.']);
+    if (info.allocation === 'NON_RANDOMIZED') out.push([I.split, 'Groups are assigned on purpose, not by chance, often based on things like your health history.']);
+    const model = {
+      SINGLE_GROUP: 'Everyone in the study gets the same treatment.',
+      PARALLEL: `Each group gets something different at the same time${arms.length ? `. There are ${arms.length} groups` : ''}.`,
+      CROSSOVER: 'You’ll try each treatment one after another, with a break in between.',
+      SEQUENTIAL: 'Groups join one after another, often at increasing doses, once the earlier group looks safe.',
+      FACTORIAL: 'Several treatments are tested in different combinations at once.',
+    }[info.interventionModel];
+    if (model) out.push([I.people, model]);
+    const mask = info.maskingInfo?.masking;
+    if (mask === 'NONE') out.push([I.eye, 'Nothing is hidden. You and your doctors will know which treatment you get. This is called open-label.']);
+    if (mask === 'SINGLE') out.push([I.eye, 'You won’t know which treatment you’re getting, but your doctors will.']);
+    if (['DOUBLE', 'TRIPLE', 'QUADRUPLE'].includes(mask)) out.push([I.eye, 'Neither you nor your doctors will know which treatment you get until the study ends. This is called double-blind, and it keeps the results fair.']);
+    if (arms.some(a => a.type === 'PLACEBO_COMPARATOR')) out.push([I.pill, 'Some people will get a placebo, which looks like the treatment but has no active drug.']);
+    if (arms.some(a => a.type === 'SHAM_COMPARATOR')) out.push([I.pill, 'Some people will get a sham procedure, which looks like the real one but doesn’t do anything.']);
+    return out;
+  }
+
+  const ARM = {
+    EXPERIMENTAL: 'Gets the treatment being tested',
+    ACTIVE_COMPARATOR: 'Gets an existing treatment, for comparison',
+    PLACEBO_COMPARATOR: 'Gets a placebo',
+    SHAM_COMPARATOR: 'Gets a sham procedure',
+    NO_INTERVENTION: 'No treatment, just check-ins',
+    OTHER: 'Other',
+  };
+
+  function durationPhrase(a, b) {
+    const da = parseDate(a), db = parseDate(b);
+    if (!da || !db || db <= da) return null;
+    const months = Math.round((db - da) / (30.44 * 864e5));
+    if (months < 1) return 'Under a month';
+    if (months < 18) return `About ${months} month${months === 1 ? '' : 's'}`;
+    const yrs = Math.round(months / 6) / 2;
+    return `About ${yrs % 1 ? yrs : yrs.toFixed(0)} years`;
+  }
+
+  /* ---------- Render ---------- */
+  async function load() {
+    if (!/^NCT\d{8}$/.test(id)) return fail('That doesn’t look like a study ID', 'Study IDs look like NCT01234567.');
+    let d;
+    try { d = await api(`/studies/${id}`); }
+    catch (err) { return fail('We couldn’t load this study', `${err.message}. It may have been removed, or ClinicalTrials.gov may be busy.`); }
+    render(d);
+  }
+
+  function fail(title, body) {
+    $('#page').innerHTML = `<div class="wrap" style="padding:80px 0"><div class="state"><h2>${esc(title)}</h2><p>${esc(body)}</p><a class="btn" href="${esc(searchToUrl(loadSearch()))}">Back to Studies</a></div></div>`;
+  }
+
+  function render(d) {
+    const p = d.protocolSection;
+    const idm = p.identificationModule, st = p.statusModule ?? {}, des = p.designModule ?? {};
+    const elig = p.eligibilityModule ?? {}, cl = p.contactsLocationsModule ?? {};
+    const spons = p.sponsorCollaboratorsModule ?? {};
+    const interventions = p.armsInterventionsModule?.interventions ?? [];
+    const arms = p.armsInterventionsModule?.armGroups ?? [];
+    document.title = `Northstar · ${idm.briefTitle}`;
+
+    // Locations with distance
+    const sites = (cl.locations ?? []).map((l, i) => ({
+      ...l, i,
+      mi: me && l.geoPoint ? milesBetween(me, l.geoPoint) : null,
+    })).sort((a, b) => {
+      if (a.mi != null && b.mi != null) return a.mi - b.mi;
+      if (a.mi != null) return -1;
+      if (b.mi != null) return 1;
+      return (a.status === 'RECRUITING' ? 0 : 1) - (b.status === 'RECRUITING' ? 0 : 1);
+    });
+    const nearest = sites.find(s => s.mi != null);
+    const openSites = sites.filter(s => s.status === 'RECRUITING').length;
+
+    const tested = interventions.filter(i => !/placebo/i.test(i.name)).map(i => i.name);
+    const phase = phaseLabel(des.phases, des.studyType);
+    const summaryParas = unescapeMd(p.descriptionModule?.briefSummary ?? '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    const detailParas = unescapeMd(p.descriptionModule?.detailedDescription ?? '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    const seen = new Set();
+    const para = t => `<p>${glossify(esc(t), seen)}</p>`;
+
+    const crit = parseCriteria(elig.eligibilityCriteria);
+    const critSeen = new Set();
+    const critList = (items, side) => items.map((c, n) => {
+      const key = `${side}${n}`, a = c.head ? '' : answers[key] ?? '';
+      return `<li class="${c.sub ? 'sub' : ''} ${c.head ? 'head' : ''} ${a ? `is-${rowState(key, a)}` : ''}" data-key="${key}">
+        <span>${glossify(esc(c.text), critSeen)}</span>
+        ${c.head ? '' : `<div class="ans" role="group" aria-label="Is this true for you?">${ANS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${a === v}">${l}</button>`).join('')}</div>`}
+      </li>`;
+    }).join('');
+
+    const contacts = (cl.centralContacts ?? []).slice(0, 2);
+    // People you could write to: the study-wide contact first, then the closest open sites that list someone.
+    const recips = [
+      ...contacts.filter(c => c.email || c.phone).map(c => ({ name: c.name || 'Study team', where: 'Main contact for the whole study', email: c.email, phone: c.phone, ext: c.phoneExt })),
+      ...sites.filter(s => s.status === 'RECRUITING').flatMap(s => {
+        const c = (s.contacts ?? []).find(c => c.email || c.phone);
+        return c ? [{ name: c.name || 'Study team', where: [s.facility, s.city].filter(Boolean).join(', '), mi: s.mi, facility: s.facility, email: c.email, phone: c.phone, ext: c.phoneExt, site: true }] : [];
+      }).slice(0, 3),
+    ];
+    const hasPlacebo = arms.some(a => a.type === 'PLACEBO_COMPARATOR');
+    const officials = (cl.overallOfficials ?? []).slice(0, 2);
+    const design = designLines(p);
+    const outcomes = p.outcomesModule?.primaryOutcomes ?? [];
+
+    const back = searchToUrl(loadSearch());
+
+    $('#page').innerHTML = `
+      <div class="wrap crumbs"><a href="${esc(back)}">${I.back}Back to Studies</a></div>
+
+      <section class="study-hero">
+        <div class="wrap study-hero-grid">
+          <div>
+            <div class="card-top" style="gap:6px">
+              ${statusTag(st.overallStatus)}
+              ${phase ? `<span class="tag tag-slate">${esc(phase)}</span>` : ''}
+              ${[...new Set(interventions.map(i => i.type))].filter(t => t !== 'OTHER').slice(0, 2).map(t => `<span class="tag tag-line">${esc(INTERVENTION[t] ?? t)}</span>`).join('')}
+            </div>
+            <h1 class="display">${esc(idm.briefTitle)}</h1>
+            ${idm.officialTitle && idm.officialTitle !== idm.briefTitle ? `<p class="official">Official title: ${esc(idm.officialTitle)}</p>` : ''}
+            <div class="hero-meta">
+              ${spons.leadSponsor?.name ? `<span>Run by <b>${esc(spons.leadSponsor.name)}</b></span>` : ''}
+              ${(p.conditionsModule?.conditions ?? []).length ? `<span>For <b>${esc(p.conditionsModule.conditions.slice(0, 3).join(', '))}</b></span>` : ''}
+              <span class="mono">${esc(idm.nctId)}</span>
+            </div>
+          </div>
+
+          <aside class="contact-card">
+            <h2>Interested?</h2>
+            <p>${st.overallStatus === 'RECRUITING' ? 'Reach out to the study team. Asking questions doesn’t commit you to anything.' : 'This study isn’t enrolling right now, but the team can tell you what’s next.'}</p>
+            ${contacts.length ? contacts.map(c => `
+              <div class="contact-person">
+                <strong>${esc(c.name ?? 'Study contact')}</strong>
+                ${c.phone ? `<a href="tel:${esc(c.phone.replace(/[^\d+]/g, ''))}">${I.phone}${esc(c.phone)}${c.phoneExt ? ` ext. ${esc(c.phoneExt)}` : ''}</a>` : ''}
+                ${c.email ? `<a href="mailto:${esc(c.email)}?subject=${encodeURIComponent(`Question about ${idm.nctId}`)}">${I.mail}${esc(c.email)}</a>` : ''}
+              </div>`).join('') : officials.length ? officials.map(o => `
+              <div class="contact-person"><strong>${esc(o.name)}</strong><span style="color:rgba(255,255,255,.7)">${esc(o.affiliation ?? '')}</span></div>`).join('') + `<div class="contact-person" style="color:rgba(255,255,255,.7)">No central contact is listed. Try the nearest site below, or ask your doctor.</div>`
+              : `<div class="contact-person" style="color:rgba(255,255,255,.7)">No contact is listed. Try the nearest site below, or ask your doctor.</div>`}
+            <a class="btn btn-mint" href="#eligibility">See If I Can Join ${I.arrow}</a>
+            <a class="official-link" href="#reach">${I.mail}Get Help Writing to Them</a>
+            <a class="official-link" href="https://clinicaltrials.gov/study/${esc(idm.nctId)}" target="_blank" rel="noopener">View the Official Record ${I.ext}</a>
+          </aside>
+        </div>
+      </section>
+
+      <div class="wrap study-body">
+        <nav class="toc" aria-label="On this page">
+          <ol>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#eligibility">Can I Join?</a></li>
+            <li><a href="#reach">Reach Out</a></li>
+            <li><a href="#happens">What Happens</a></li>
+            <li><a href="#where">Where</a></li>
+            <li><a href="#timeline">Timeline</a></li>
+            <li><a href="#details">Details</a></li>
+          </ol>
+        </nav>
+
+        <div>
+          <!-- Overview -->
+          <section class="sec" id="overview">
+            <div class="section-kicker">Overview</div>
+            <h2>What this study is about</h2>
+            <div class="prose">${summaryParas.map(para).join('') || '<p>No summary was provided.</p>'}</div>
+            ${detailParas.length ? `
+              <details class="prose read-more"><summary class="btn-link" style="list-style:none;cursor:pointer">Read the Full Description ${I.chev}</summary>
+                <div style="margin-top:14px">${detailParas.map(t => `<p style="font-size:16px;color:var(--forest-70)">${glossify(esc(t), seen)}</p>`).join('')}</div>
+              </details>` : ''}
+
+            <div class="glance">
+              ${tested.length ? `<div class="glance-tile"><div class="k">${I.flask}Being tested</div><div class="v">${esc(tested.slice(0, 2).join(', '))}</div>${tested.length > 2 ? `<div class="s">and ${tested.length - 2} more</div>` : ''}</div>` : ''}
+              <div class="glance-tile"><div class="k">${I.person}Who can join</div><div class="v">${esc(ageRange(elig.minimumAge, elig.maximumAge))}</div><div class="s">${esc(SEX[elig.sex] ?? 'All sexes')}${elig.healthyVolunteers ? ', healthy volunteers welcome' : ''}</div></div>
+              ${des.enrollmentInfo?.count ? `<div class="glance-tile"><div class="k">${I.people}How many people</div><div class="v">${fmtNum(des.enrollmentInfo.count)}</div><div class="s">${des.enrollmentInfo.type === 'ESTIMATED' ? 'Planned' : 'Enrolled'}</div></div>` : ''}
+              ${durationPhrase(st.startDateStruct?.date, st.primaryCompletionDateStruct?.date) ? `<div class="glance-tile"><div class="k">${I.clock}How long</div><div class="v">${durationPhrase(st.startDateStruct.date, st.primaryCompletionDateStruct.date)}</div><div class="s">Until main results</div></div>` : ''}
+              <div class="glance-tile"><div class="k">${I.pin}Where</div><div class="v">${nearest ? fmtMiles(nearest.mi) : plural(sites.length, 'site')}</div><div class="s">${nearest ? `Nearest of ${plural(sites.length, 'site')}` : openSites ? `${fmtNum(openSites)} enrolling now` : 'No sites listed'}</div></div>
+            </div>
+          </section>
+
+          <!-- Eligibility -->
+          <section class="sec" id="eligibility">
+            <div class="section-kicker">Can I Join?</div>
+            <h2>Who this study is looking for</h2>
+            <div class="basics">
+              <div class="basic"><span class="ic">${I.person}</span><span><small>Age</small><b>${esc(ageRange(elig.minimumAge, elig.maximumAge))}</b></span></div>
+              <div class="basic"><span class="ic">${I.people}</span><span><small>Sex</small><b>${esc(SEX[elig.sex] ?? 'All sexes')}</b></span></div>
+              <div class="basic"><span class="ic">${I.heart}</span><span><small>Healthy volunteers</small><b>${elig.healthyVolunteers ? 'Welcome' : 'Not accepted'}</b></span></div>
+            </div>
+            <p class="where-note">${crit ? 'Answer Yes, No, or Not sure for each item, and skip anything you don’t know. Your answers stay on this device. Anything you’re not sure about becomes a question for the study team.' : 'The study team makes the final call, often after a screening visit.'}</p>
+            ${crit ? `
+              <div class="elig-cols">
+                <div class="elig-col in">
+                  <header><span class="mark">${I.check}</span><h3>You may be able to join if</h3><span class="count">${crit.in.filter(c => !c.head).length}</span></header>
+                  <ul class="crit">${critList(crit.in, 'i') || '<li><span class="muted">None listed</span></li>'}</ul>
+                </div>
+                <div class="elig-col out">
+                  <header><span class="mark">${I.x}</span><h3>You can’t join if</h3><span class="count">${crit.out.filter(c => !c.head).length}</span></header>
+                  <ul class="crit">${critList(crit.out, 'o') || '<li><span class="muted">None listed</span></li>'}</ul>
+                </div>
+              </div>` : elig.eligibilityCriteria ? `<div class="elig-col"><div class="elig-raw">${glossify(esc(unescapeMd(elig.eligibilityCriteria)), critSeen)}</div></div>` : '<p class="muted">No eligibility details were provided.</p>'}
+            ${crit ? `
+              <div class="fit" id="fit" aria-live="polite">
+                <div class="fit-bar" aria-hidden="true"><i class="f"></i><i class="b"></i><i class="u"></i></div>
+                <div><h3 id="fitTitle"></h3><p id="fitBody"></p></div>
+                <div class="fit-actions">
+                  <a class="btn btn-secondary btn-sm" href="doctor.html?id=${esc(idm.nctId)}">${I.print}For My Doctor</a>
+                  <a class="btn btn-sm" href="#reach">Reach Out ${I.arrow}</a>
+                </div>
+              </div>` : ''}
+          </section>
+
+          <!-- Reach out -->
+          <section class="sec" id="reach">
+            <div class="section-kicker">Reach Out</div>
+            <h2>Reach out to the study team</h2>
+            <p class="reach-lede">Asking questions doesn’t sign you up for anything. Here’s how it usually goes from here.</p>
+            <ol class="steps">
+              <li class="now"><span class="n">1</span><b>You reach out</b><span>Send an email or make a call. We’ll help you write it below.</span><small>Today</small></li>
+              <li><span class="n">2</span><b>A quick phone screen</b><span>A coordinator, the person who handles sign-ups, asks a few questions to check the basics.</span><small>Often 10 to 20 minutes</small></li>
+              <li><span class="n">3</span><b>A screening visit</b><span>You meet the team for tests and a closer look at the requirements.</span><small>Can take a few hours</small></li>
+              <li><span class="n">4</span><b>Consent, then you start</b><span>They walk you through the risks in detail. You only join if you sign, and you can leave at any time.</span><small>Only if you say yes</small></li>
+            </ol>
+
+            <div class="composer">
+              <div class="composer-form">
+                <div class="field">
+                  <span class="field-label">Send to</span>
+                  ${recips.length ? `<div class="recips" role="radiogroup" aria-label="Send to">${recips.map((r, i) => `
+                    <button type="button" class="recip" role="radio" data-i="${i}" aria-checked="false">
+                      <b>${esc(r.name)}</b><span>${esc(r.where)}${r.mi != null ? `<em>${esc(fmtMiles(r.mi))}</em>` : ''}</span>
+                    </button>`).join('')}</div>`
+                    : '<p class="composer-hint">No contact is listed for this study. Copy the message and send it to the nearest site, or ask your doctor to reach out.</p>'}
+                </div>
+                <label class="field"><span>Your name</span><input id="meName" autocomplete="name" placeholder="First and last name"></label>
+                <div class="field-row">
+                  <label class="field"><span>Age</span><input id="meAge" type="number" inputmode="numeric" min="0" max="120"></label>
+                  <label class="field"><span>Where you live</span><input id="meCity" autocomplete="address-level2" placeholder="City, state"></label>
+                </div>
+                <label class="field"><span>Best way to reach you</span><input id="meReach" placeholder="Phone number or email"></label>
+                <div class="field">
+                  <span class="field-label">Also ask about</span>
+                  <div class="chips" id="extras">${EXTRAS.filter(([k]) => k !== 'placebo' || hasPlacebo).map(([k, l]) => `<button type="button" class="chip" data-k="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
+                </div>
+                <p class="composer-hint">Saved only on this device. Nothing is sent until you send it yourself.</p>
+              </div>
+
+              <div class="letter">
+                <div class="letter-head" id="mode" role="group" aria-label="Message type">
+                  <button type="button" class="chip" data-mode="email" aria-pressed="true">${I.mail}Email</button>
+                  <button type="button" class="chip" data-mode="phone" aria-pressed="false">${I.phone}Phone Call</button>
+                </div>
+                <dl class="letter-meta" id="letterMeta"></dl>
+                <div class="letter-body" id="letterBody"></div>
+                <div class="letter-actions">
+                  <a class="btn btn-sm" id="sendLetter"></a>
+                  <button type="button" class="btn btn-secondary btn-sm" id="copyLetter">${I.copy}Copy</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- What happens -->
+          <section class="sec" id="happens">
+            <div class="section-kicker">What Happens</div>
+            <h2>What the study involves</h2>
+            ${design.length ? `<ul class="design-lines">${design.map(([ic, t]) => `<li><span class="ic">${ic}</span><span>${glossify(esc(t), new Set())}</span></li>`).join('')}</ul>` : ''}
+            ${arms.length ? `
+              <h3>${arms.length === 1 ? 'The study group' : `The ${arms.length} study groups`}</h3>
+              <div class="arms">${arms.map((a, n) => `
+                <div class="arm">
+                  <div class="arm-kind">${arms.length > 1 && !/^(group|arm|cohort|part)\b/i.test(a.label) ? `Group ${n + 1} · ` : ''}${esc(ARM[a.type] ?? 'Study group')}</div>
+                  <h4>${esc(a.label)}</h4>
+                  ${a.description ? `<p>${glossify(esc(unescapeMd(a.description)), new Set())}</p>` : ''}
+                  ${(a.interventionNames ?? []).length ? `<div class="tags">${a.interventionNames.map(n => `<span class="tag">${esc(n.replace(/^[\w\s]+:\s*/, ''))}</span>`).join('')}</div>` : ''}
+                </div>`).join('')}
+              </div>` : ''}
+            ${outcomes.length ? `
+              <div class="outcomes">
+                <h3>What they’re measuring</h3>
+                ${outcomes.slice(0, 4).map(o => `
+                  <div class="outcome">
+                    <div class="when">${esc(o.timeFrame ?? '')}</div>
+                    <div class="what">${esc(unescapeMd(o.measure))}${o.description ? `<small>${esc(unescapeMd(o.description)).slice(0, 320)}${o.description.length > 320 ? '…' : ''}</small>` : ''}</div>
+                  </div>`).join('')}
+              </div>` : ''}
+          </section>
+
+          <!-- Where -->
+          <section class="sec" id="where">
+            <div class="section-kicker">Where</div>
+            <h2>${sites.length ? `${plural(sites.length, 'place')} to take part` : 'Where it happens'}</h2>
+            ${sites.length ? `
+              <p class="where-note">${me ? `Sorted by distance from ${esc(me.label || 'you')}.` : 'Search with a city to sort these by distance.'} ${openSites ? `${fmtNum(openSites)} ${openSites === 1 ? 'is' : 'are'} enrolling now.` : ''}</p>
+              <div class="where-grid">
+                <div class="site-map"><div id="siteMap"></div></div>
+                <ul class="site-list" id="siteList">
+                  ${sites.slice(0, 200).map(s => {
+                    const c = (s.contacts ?? []).find(c => c.phone || c.email);
+                    return `<li data-i="${s.i}">
+                      <div class="row"><span class="fac">${esc(s.facility ?? 'Study site')}</span><span class="dist">${s.mi != null ? fmtMiles(s.mi) : ''}</span></div>
+                      <div class="place">${esc([s.city, STATE_ABBR[s.state] ?? s.state, s.country !== 'United States' ? s.country : ''].filter(Boolean).join(', '))} ${s.status ? statusTag(s.status) : ''}</div>
+                      ${c ? `<div class="site-contact">${c.phone ? `<a href="tel:${esc(c.phone.replace(/[^\d+]/g, ''))}">${esc(c.phone)}</a>` : `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>`}</div>` : ''}
+                    </li>`;
+                  }).join('')}
+                </ul>
+              </div>` : '<p class="muted">No locations have been listed yet.</p>'}
+          </section>
+
+          <!-- Timeline -->
+          <section class="sec" id="timeline">
+            <div class="section-kicker">Timeline</div>
+            <h2>Where the study is today</h2>
+            <div class="timeline" id="tl"></div>
+          </section>
+
+          <!-- Details -->
+          <section class="sec" id="details">
+            <div class="section-kicker">Details</div>
+            <h2>For your doctor</h2>
+            <div class="doc-cta">
+              <p>Print a short summary of this study, with your checklist answers, to bring to your next appointment.</p>
+              <a class="btn btn-mint" href="doctor.html?id=${esc(idm.nctId)}">${I.print}Share With My Doctor</a>
+            </div>
+            <div class="details-grid">
+              <dl>
+                ${row('Study ID', `<span class="mono">${esc(idm.nctId)}</span>`)}
+                ${row('Sponsor study ID', esc(idm.orgStudyIdInfo?.id))}
+                ${row('Lead sponsor', esc(spons.leadSponsor?.name))}
+                ${row('Collaborators', esc((spons.collaborators ?? []).map(c => c.name).join(', ')))}
+              </dl>
+              <dl>
+                ${row('Study type', esc({ INTERVENTIONAL: 'Interventional (tests a treatment)', OBSERVATIONAL: 'Observational (watches and records)', EXPANDED_ACCESS: 'Expanded access' }[des.studyType] ?? des.studyType))}
+                ${row('Phase', esc((des.phases ?? []).map(x => PHASE[x]?.short ?? 'Not applicable').join(', ')))}
+                ${row('Allocation', esc(title(des.designInfo?.allocation)))}
+                ${row('Masking', esc(title(des.designInfo?.maskingInfo?.masking)))}
+              </dl>
+              <dl>
+                ${row('First posted', esc(fmtDate(st.studyFirstPostDateStruct?.date, true)))}
+                ${row('Last updated', esc(fmtDate(st.lastUpdatePostDateStruct?.date, true)))}
+                ${row('Results posted', d.hasResults ? 'Yes' : 'Not yet')}
+                ${row('Conditions', esc((p.conditionsModule?.conditions ?? []).join(', ')))}
+              </dl>
+            </div>
+          </section>
+        </div>
+      </div>`;
+
+    wireChecklist(crit);
+    wireReach({ idm, recips, crit });
+    drawTimeline(st);
+    if (sites.length) drawSites(sites);
+    wireToc();
+    if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+  }
+
+  function title(s) { return s ? s.toLowerCase().replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()) : ''; }
+  function row(k, v) { return v ? `<div class="dl-row"><dt>${k}</dt><dd>${v}</dd></div>` : ''; }
+
+  /* ---------- Can I join? checklist ---------- */
+  const ANS = [['y', 'Yes'], ['n', 'No'], ['u', 'Not sure']];
+  function loadAnswers() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CHECK_KEY));
+      if (saved) return saved;
+      // Items flagged with the old "Ask" button carry over as "Not sure"
+      return Object.fromEntries(JSON.parse(localStorage.getItem(ASK_KEY) ?? '[]').map(k => [k, 'u']));
+    } catch { return {}; }
+  }
+
+  function tally(crit) {
+    const t = { total: 0, answered: 0, fit: [], block: [], unsure: [] };
+    if (!crit) return t;
+    for (const [side, items] of [['i', crit.in], ['o', crit.out]]) items.forEach((c, n) => {
+      if (c.head) return;
+      t.total++;
+      const s = rowState(side + n, answers[side + n]);
+      if (s) { t[s].push(c.text); t.answered++; }
+    });
+    return t;
+  }
+
+  function verdict(t) {
+    if (!t.answered) return { tone: '', title: 'Answer a few to see how you line up', body: `${plural(t.total, 'requirement')} listed. Skip anything you don’t know.` };
+    if (t.block.length) return { tone: 'block', title: 'Something may rule you out', body: `${plural(t.block.length, 'item')} may not fit you. Requirements often have exceptions, so it’s still worth asking.` };
+    const unsure = t.unsure.length ? ` The team can help with the ${plural(t.unsure.length, 'item')} you weren’t sure about.` : '';
+    if (t.answered < t.total) return { tone: 'go', title: unsure ? 'Worth reaching out' : 'So far, so good', body: `Nothing rules you out in the ${fmtNum(t.answered)} of ${fmtNum(t.total)} you’ve answered.${unsure}` };
+    if (unsure) return { tone: 'go', title: 'Worth reaching out', body: `Nothing rules you out.${unsure}` };
+    return { tone: 'go', title: 'Looks like a fit', body: 'Based on your answers, you meet every listed requirement. The study team makes the final call at screening.' };
+  }
+
+  function wireChecklist(crit) {
+    if (!crit) return;
+    function paint() {
+      const t = tally(crit), v = verdict(t);
+      const pct = n => `${t.total ? (n / t.total) * 100 : 0}%`;
+      $('#fit').dataset.tone = v.tone;
+      $('#fit .f').style.width = pct(t.fit.length);
+      $('#fit .b').style.width = pct(t.block.length);
+      $('#fit .u').style.width = pct(t.unsure.length);
+      $('#fitTitle').textContent = v.title;
+      $('#fitBody').textContent = v.body;
+    }
+    $$('.crit .ans button').forEach(btn => btn.addEventListener('click', () => {
+      const li = btn.closest('li'), key = li.dataset.key;
+      const v = answers[key] === btn.dataset.v ? '' : btn.dataset.v; // tap again to clear
+      if (v) answers[key] = v; else delete answers[key];
+      try { localStorage.setItem(CHECK_KEY, JSON.stringify(answers)); } catch {}
+      $$('button', li).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+      li.classList.remove('is-fit', 'is-block', 'is-unsure');
+      if (v) li.classList.add(`is-${rowState(key, v)}`);
+      paint();
+      redrawLetter();
+    }));
+    paint();
+  }
+
+  /* ---------- Reach out: email draft and call script ---------- */
+  const EXTRAS = [
+    ['visits',  'Visits and Time', 'How many visits are involved, and how long does each one take?'],
+    ['cost',    'Costs',           'Will this cost me anything? Is travel or time off covered?'],
+    ['doctor',  'My Own Doctor',   'Can I keep seeing my own doctor during the study?'],
+    ['placebo', 'Placebo Odds',    'What are the chances I’d get the placebo instead of the treatment?'],
+    ['after',   'After It Ends',   'What happens when the study ends?'],
+  ];
+  const ph = s => `⟦${s}⟧`; // placeholder the reader still needs to fill in
+  const clip = s => s.length > 220 ? `${s.slice(0, 217).trimEnd()}…` : s;
+
+  function letterDoc(mode, { idm, to, t }) {
+    const you = profile;
+    const about = [you.age ? `I’m ${you.age}` : '', you.city ? `I live in ${you.city}` : ''].filter(Boolean).join(', and ');
+    const unsure = t.unsure.slice(0, 8).map(x => `“${clip(x)}”`);
+    const block = t.block.slice(0, 8).map(x => `“${clip(x)}”`);
+    const enrolling = `Is the study still enrolling${to?.site ? ' at your site' : ''}?`;
+    const extras = EXTRAS.filter(([k]) => you.extras.includes(k) && $(`#extras [data-k="${k}"]`)).map(x => x[2]);
+
+    if (mode === 'phone') return [
+      { h: 'When they answer' },
+      { p: `“Hi, my name is ${you.name || ph('your name')}. I’m calling about the study ${idm.briefTitle}, ID ${idm.nctId}. Are you the right person to talk to about joining?”` },
+      ...(about ? [{ h: 'Share a little about you' }, { p: `“${about}.”` }] : []),
+      { h: 'Ask' },
+      { ol: [enrolling, ...unsure.map(x => `I wasn’t sure about this one: ${x}`), ...block.map(x => `Would this rule me out? ${x}`), ...extras] },
+      { h: 'Have these ready' },
+      { ul: ['A list of the medicines you take', 'When you were diagnosed, and your doctor’s name', 'Your calendar, in case they offer a screening visit'] },
+      { h: 'Before you hang up' },
+      { p: 'Write down who you spoke with and what happens next. If you get voicemail, leave your name, the study ID, and the best way to reach you.' },
+    ];
+
+    const doc = [
+      { p: 'Hello,' },
+      { p: `I came across your study “${idm.briefTitle}” (${idm.nctId}) and I’d like to find out whether I could take part${to?.facility ? ` at ${to.facility}` : ''}.` },
+    ];
+    if (about) doc.push({ p: `A little about me: ${about}.` });
+    if (t.answered) doc.push({ p: unsure.length || block.length ? 'I’ve read through the eligibility requirements and have a few questions.' : 'I’ve read through the eligibility requirements, and as far as I can tell I meet them.' });
+    if (unsure.length) doc.push({ p: 'I wasn’t sure about these:' }, { ul: unsure });
+    if (block.length) doc.push({ p: 'These might rule me out, but I’d like to check:' }, { ul: block });
+    doc.push(
+      { p: 'I’d also like to know:' }, { ul: [enrolling, ...extras] },
+      { p: `The best way to reach me is ${you.reach || ph('your phone or email')}.` },
+      { p: `Thank you,\n${you.name || ph('Your name')}` },
+    );
+    return doc;
+  }
+
+  const docText = doc => doc.map(b =>
+    b.h ? b.h.toUpperCase()
+    : b.ul ? b.ul.map(x => `- ${x}`).join('\n')
+    : b.ol ? b.ol.map((x, n) => `${n + 1}. ${x}`).join('\n')
+    : b.p
+  ).join('\n\n').replace(/⟦(.*?)⟧/g, '[$1]');
+
+  const docHtml = doc => doc.map(b => {
+    const fill = s => esc(s).replace(/⟦(.*?)⟧/g, '<mark>$1</mark>');
+    if (b.h) return `<h5>${esc(b.h)}</h5>`;
+    if (b.ul) return `<ul>${b.ul.map(x => `<li>${fill(x)}</li>`).join('')}</ul>`;
+    if (b.ol) return `<ol>${b.ol.map(x => `<li>${fill(x)}</li>`).join('')}</ol>`;
+    return `<p>${fill(b.p)}</p>`;
+  }).join('');
+
+  let redrawLetter = () => {};
+  function wireReach({ idm, recips, crit }) {
+    // Default to the nearest site when we know where you are; otherwise the study-wide contact.
+    let pick = me && recips.some(r => r.site) ? recips.findIndex(r => r.site) : 0;
+    let mode = recips[pick] && !recips[pick].email && recips[pick].phone ? 'phone' : 'email';
+    const subject = `Interested in your study ${idm.nctId}`;
+    const save = () => { try { localStorage.setItem(ME_KEY, JSON.stringify(profile)); } catch {} };
+
+    for (const [sel, k] of [['#meName', 'name'], ['#meAge', 'age'], ['#meCity', 'city'], ['#meReach', 'reach']]) {
+      const el = $(sel);
+      el.value = profile[k] ?? '';
+      el.addEventListener('input', () => { profile[k] = el.value.trim(); save(); draw(); });
+    }
+    $$('#extras .chip').forEach(chip => {
+      chip.setAttribute('aria-pressed', String(profile.extras.includes(chip.dataset.k)));
+      chip.addEventListener('click', () => {
+        const on = !profile.extras.includes(chip.dataset.k);
+        profile.extras = on ? [...profile.extras, chip.dataset.k] : profile.extras.filter(k => k !== chip.dataset.k);
+        chip.setAttribute('aria-pressed', String(on));
+        save(); draw();
+      });
+    });
+    $$('.recip').forEach(b => b.addEventListener('click', () => { pick = +b.dataset.i; draw(); }));
+    $$('#mode .chip').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; draw(); }));
+
+    $('#copyLetter').addEventListener('click', async () => {
+      const doc = letterDoc(mode, { idm, to: recips[pick], t: tally(crit) });
+      try {
+        await navigator.clipboard.writeText(docText(doc));
+        toast(mode === 'email' ? 'Copied. Paste it into a new email.' : 'Copied. Keep it handy for your call.');
+      } catch { toast('Couldn’t copy. Try selecting the text instead.'); }
+    });
+
+    function draw() {
+      const to = recips[pick];
+      const doc = letterDoc(mode, { idm, to, t: tally(crit) });
+      $$('.recip').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.i === pick)));
+      $$('#mode .chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+
+      const phone = to?.phone ? `${to.phone}${to.ext ? ` ext. ${to.ext}` : ''}` : '';
+      const row = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+      const missing = s => `<span class="muted">${s}</span>`;
+      $('#letterMeta').innerHTML = mode === 'email'
+        ? row('To', to?.email ? `${esc(to.name)} &lt;${esc(to.email)}&gt;` : missing(to ? 'No email listed for this contact. Try Phone Call, or pick someone else.' : 'No contact listed')) + row('Subject', esc(subject))
+        : row('Call', phone ? `${esc(to.name)}, ${esc(phone)}` : missing(to ? 'No phone number listed for this contact. Try Email, or pick someone else.' : 'No contact listed'));
+      $('#letterBody').innerHTML = docHtml(doc);
+
+      const send = $('#sendLetter');
+      const href = mode === 'email'
+        ? to?.email && `mailto:${to.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(docText(doc))}`
+        : to?.phone && `tel:${to.phone.replace(/[^\d+]/g, '')}`;
+      send.hidden = !href;
+      if (href) {
+        send.href = href;
+        send.innerHTML = mode === 'email' ? `${I.mail}Open in Email` : `${I.phone}Call ${esc(phone)}`;
+      }
+    }
+    redrawLetter = draw;
+    draw();
+  }
+
+  /* ---------- Timeline ---------- */
+  function drawTimeline(st) {
+    const marks = [
+      { d: st.startDateStruct?.date, t: st.startDateStruct?.type, label: 'Study starts', past: 'Study started' },
+      { d: st.primaryCompletionDateStruct?.date, t: st.primaryCompletionDateStruct?.type, label: 'Main results expected', past: 'Main data collected' },
+      { d: st.completionDateStruct?.date, t: st.completionDateStruct?.type, label: 'Study ends', past: 'Study ended' },
+    ].filter(m => m.d && parseDate(m.d));
+    const el = $('#tl');
+    if (!marks.length) { el.outerHTML = '<p class="muted">No dates have been listed yet.</p>'; return; }
+    const now = new Date();
+    // Collapse duplicate dates (primary completion often equals completion)
+    const uniq = marks.filter((m, i) => marks.findIndex(x => x.d === m.d) === i);
+    const all = [...uniq.map(m => ({ ...m, date: parseDate(m.d) })), { today: true, date: now }].sort((a, b) => a.date - b.date);
+    const lo = all[0].date, hi = all.at(-1).date, span = Math.max(1, hi - lo);
+    const pos = dt => 3 + ((dt - lo) / span) * 94;
+    const todayPct = pos(now);
+    el.innerHTML = `
+      <div class="tl-bar"><div class="tl-fill" style="width:${Math.min(100, Math.max(0, todayPct))}%"></div>
+        ${all.map((m, i) => {
+          const edge = i === 0 ? 'first' : i === all.length - 1 ? 'last' : '';
+          const side = i % 2 === 0 ? 'below' : 'above';
+          if (m.today) return `<div class="tl-mark tl-today ${side} ${edge}" style="left:${pos(m.date)}%"><div class="dot"></div><div class="lbl"><b>Today</b>${now.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div></div>`;
+          const past = m.date <= now;
+          return `<div class="tl-mark ${side} ${edge}" style="left:${pos(m.date)}%"><div class="dot"></div><div class="lbl"><b>${esc(fmtDate(m.d))}</b>${esc(past ? m.past : m.label)}${m.t === 'ESTIMATED' && !past ? ' (estimated)' : ''}</div></div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  /* ---------- Site map ---------- */
+  function drawSites(sites) {
+    const map = makeMap($('#siteMap'));
+    map.invalidateSize();
+    const pts = [], markers = new Map();
+    if (me) { youMarker(me.lat, me.lon).bindTooltip('You', { direction: 'top', offset: [0, -8] }).addTo(map); pts.push([me.lat, me.lon]); }
+    for (const s of sites) {
+      if (!s.geoPoint) continue;
+      const m = dotMarker(s.geoPoint.lat, s.geoPoint.lon, `site ${s.status === 'RECRUITING' ? '' : 'off'}`).addTo(map);
+      m.bindPopup(`<b>${esc(s.facility ?? 'Study site')}</b>${esc([s.city, s.state].filter(Boolean).join(', '))}${s.mi != null ? `<br>${fmtMiles(s.mi)} away` : ''}`);
+      m.on('click', () => {
+        const li = $(`#siteList li[data-i="${s.i}"]`);
+        $$('#siteList li.hot').forEach(x => x.classList.remove('hot'));
+        li?.classList.add('hot'); li?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+      markers.set(s.i, m);
+      pts.push([s.geoPoint.lat, s.geoPoint.lon]);
+    }
+    // Frame "you + the closest few" so the map is useful, not a world view of every site.
+    const focus = me ? [[me.lat, me.lon], ...sites.filter(s => s.geoPoint).slice(0, 3).map(s => [s.geoPoint.lat, s.geoPoint.lon])] : pts;
+    if (focus.length > 1) map.fitBounds(focus, { animate: false, padding: [40, 40], maxZoom: 10 });
+    else if (focus.length === 1) map.setView(focus[0], 9, { animate: false });
+    $('#siteList').addEventListener('click', e => {
+      const li = e.target.closest('li[data-i]');
+      if (!li || e.target.closest('a')) return;
+      const m = markers.get(+li.dataset.i);
+      if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 10)); m.openPopup(); }
+      $$('#siteList li.hot').forEach(x => x.classList.remove('hot'));
+      li.classList.add('hot');
+    });
+    setTimeout(() => map.invalidateSize(), 60);
+  }
+
+  /* ---------- TOC scrollspy ---------- */
+  function wireToc() {
+    const links = $$('.toc a');
+    links[0]?.classList.add('on');
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === `#${e.target.id}`));
+    }, { rootMargin: '-30% 0px -60% 0px' });
+    $$('.sec').forEach(s => io.observe(s));
+  }
+
+  load();
+</script>
+</body>
+</html>

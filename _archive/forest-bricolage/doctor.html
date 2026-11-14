@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northstar · Study Brief</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%230F3E17%22/%3E%3Cg%20transform%3D%22translate%284%204%29%22%20color%3D%22%23B1DBB8%22%3E%3Cpath%20d%3D%22M12%202.5%2015.4%2012H8.6zM13.7%2012a1.7%201.7%200%200%200-3.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22/%3E%3Cpath%20d%3D%22M8.6%2012h6.8L12%2021.5zM10.3%2012a1.7%201.7%200%200%200%203.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22%20opacity%3D%22.45%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body class="brief-page">
+
+<div class="brief-bar">
+  <div class="brief-bar-in">
+    <a class="crumb-link" id="backLink" href="study.html">Back to Study</a>
+    <div class="brief-bar-mid" id="viewToggle" role="group" aria-label="Which requirements to show">
+      <button type="button" class="chip" data-view="all" aria-pressed="true">All Requirements</button>
+      <button type="button" class="chip" data-view="answered" aria-pressed="false">Only My Answers</button>
+    </div>
+    <button type="button" class="btn btn-sm" id="printBtn">Print or Save PDF</button>
+  </div>
+  <p class="brief-bar-note">This is what your doctor will see. Studies with long lists of requirements continue onto a second page. Choose Only My Answers to keep it shorter.</p>
+</div>
+
+<main id="page">
+  <div class="loading-page"><div class="brand-mark" data-mark></div>Preparing the summary…</div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+  $('[data-mark]').innerHTML = I.mark;
+  $('#backLink').insertAdjacentHTML('afterbegin', I.back);
+  $('#printBtn').insertAdjacentHTML('afterbegin', I.print);
+
+  const id = (new URLSearchParams(location.search).get('id') ?? '').toUpperCase().trim();
+  $('#backLink').href = `study.html?id=${encodeURIComponent(id)}`;
+  const answers = (() => { try { return JSON.parse(localStorage.getItem(`northstar:check:${id}`)) ?? {}; } catch { return {}; } })();
+  const profile = (() => { try { return JSON.parse(localStorage.getItem('northstar:me')) ?? {}; } catch { return {}; } })();
+  const search = loadSearch();
+  const me = search.lat !== '' && search.lat != null ? { lat: +search.lat, lon: +search.lon } : null;
+
+  // Clinician-facing wording: keep the registry's terms instead of the plain-language versions.
+  const ANSWER = {
+    i: { y: 'Meets', n: 'Does not meet', u: 'Unsure' },
+    o: { y: 'Applies', n: 'Does not apply', u: 'Unsure' },
+  };
+  const TONE = { fit: 'go', block: 'stop', unsure: 'soon' };
+  const ARM_TYPE = {
+    EXPERIMENTAL: 'Experimental', ACTIVE_COMPARATOR: 'Active comparator', PLACEBO_COMPARATOR: 'Placebo comparator',
+    SHAM_COMPARATOR: 'Sham comparator', NO_INTERVENTION: 'No intervention', OTHER: 'Other',
+  };
+  const words = s => s ? s.toLowerCase().replace(/_/g, ' ') : '';
+  const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+  const blank = v => v ? esc(v) : '<span class="blank" aria-label="Not provided"></span>';
+
+  async function load() {
+    if (!/^NCT\d{8}$/.test(id)) return fail('That doesn’t look like a study ID', 'Study IDs look like NCT01234567.');
+    let d;
+    try { d = await api(`/studies/${id}`); }
+    catch (err) { return fail('We couldn’t load this study', `${err.message}. Try again in a moment.`); }
+    render(d, await dataVersion());
+  }
+
+  function fail(title, body) {
+    $('#page').innerHTML = `<div class="wrap" style="padding:80px 0"><div class="state"><h2>${esc(title)}</h2><p>${esc(body)}</p><a class="btn" href="${esc(searchToUrl(loadSearch()))}">Back to Studies</a></div></div>`;
+  }
+
+  function render(d, version) {
+    const p = d.protocolSection;
+    const idm = p.identificationModule, st = p.statusModule ?? {}, des = p.designModule ?? {};
+    const info = des.designInfo ?? {}, elig = p.eligibilityModule ?? {}, cl = p.contactsLocationsModule ?? {};
+    const arms = p.armsInterventionsModule?.armGroups ?? [];
+    const outcomes = p.outcomesModule?.primaryOutcomes ?? [];
+    const crit = parseCriteria(elig.eligibilityCriteria);
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    document.title = `Northstar Study Brief, ${idm.nctId}${profile.name ? `, ${profile.name}` : ''}`;
+
+    // Design, in registry terms
+    const masking = info.maskingInfo?.masking;
+    const who = (info.maskingInfo?.whoMasked ?? []).map(words);
+    const design = [
+      info.allocation && info.allocation !== 'NA' ? words(info.allocation).replace('non randomized', 'non-randomized') : '',
+      info.interventionModel ? `${words(info.interventionModel)} assignment` : '',
+      masking ? (masking === 'NONE' ? 'open label' : `${words(masking)}-blind${who.length ? ` (${who.join(', ')})` : ''}`) : '',
+      info.primaryPurpose ? `${words(info.primaryPurpose)} purpose` : '',
+    ].filter(Boolean).join(', ');
+    const phases = (des.phases ?? []).map(x => PHASE[x]?.short).filter(Boolean).join(', ');
+
+    // Every answerable requirement, with the patient's answer
+    const rows = crit ? [['i', crit.in], ['o', crit.out]].map(([side, items]) => ({
+      side,
+      items: items.map((c, n) => ({ ...c, side, key: side + n, a: c.head ? '' : answers[side + n] ?? '' })),
+    })) : [];
+    const answerable = rows.flatMap(r => r.items.filter(c => !c.head));
+    const answered = answerable.filter(c => c.a);
+    const flagged = answered.filter(c => ['block', 'unsure'].includes(rowState(c.key, c.a)));
+
+    // Sites: nearest open site to the patient, plus the study-wide contact
+    const sites = (cl.locations ?? []).filter(s => s.status === 'RECRUITING')
+      .map(s => ({ ...s, mi: me && s.geoPoint ? milesBetween(me, s.geoPoint) : null }))
+      .sort((a, b) => (a.mi ?? Infinity) - (b.mi ?? Infinity));
+    const nearest = me ? sites[0] : null;
+    const central = (cl.centralContacts ?? [])[0];
+    const contactLine = c => c ? [c.name, c.phone && `${c.phone}${c.phoneExt ? ` ext. ${c.phoneExt}` : ''}`, c.email].filter(Boolean).map(esc).join('<br>') : '';
+
+    const answerTag = c => {
+      if (c.head) return '';
+      if (!c.a) return '<span class="ans-none">Not answered</span>';
+      return `<span class="tag tag-${TONE[rowState(c.key, c.a)]}">${ANSWER[c.side][c.a]}</span>`;
+    };
+
+    $('#page').innerHTML = `
+      <article class="sheet">
+        <header class="sh-head">
+          <div class="sh-brand">
+            <span class="brand-mark">${I.mark}</span>
+            <div><b>Clinical Study Brief</b><span>Prepared by the patient with Northstar on ${esc(today)}</span></div>
+          </div>
+          <dl class="sh-patient">
+            <div><dt>Patient</dt><dd>${blank(profile.name)}</dd></div>
+            <div><dt>Age</dt><dd>${blank(profile.age)}</dd></div>
+            <div><dt>Lives in</dt><dd>${blank(profile.city || search.loc)}</dd></div>
+          </dl>
+        </header>
+
+        <section class="sh-study">
+          <div class="sh-ids">
+            <span class="mono">${esc(idm.nctId)}</span>
+            ${statusTag(st.overallStatus)}
+            ${phases ? `<span class="tag tag-slate">${esc(phases)}</span>` : ''}
+          </div>
+          <h1 class="display">${esc(idm.briefTitle)}</h1>
+          ${idm.officialTitle && idm.officialTitle !== idm.briefTitle ? `<p class="sh-official">${esc(idm.officialTitle)}</p>` : ''}
+          <dl class="sh-facts">
+            ${fact('Sponsor', esc(p.sponsorCollaboratorsModule?.leadSponsor?.name))}
+            ${fact('Conditions', esc((p.conditionsModule?.conditions ?? []).join(', ')))}
+            ${fact('Study type', esc(cap(words(des.studyType))))}
+            ${fact('Design', esc(cap(design)))}
+            ${fact('Enrollment', des.enrollmentInfo?.count ? `${fmtNum(des.enrollmentInfo.count)} ${des.enrollmentInfo.type === 'ESTIMATED' ? '(planned)' : '(actual)'}` : '')}
+            ${fact('Eligible', esc([ageRange(elig.minimumAge, elig.maximumAge), (SEX[elig.sex] ?? 'All sexes').toLowerCase(), elig.healthyVolunteers ? 'healthy volunteers accepted' : 'no healthy volunteers'].join(', ')))}
+            ${fact('Start', esc(fmtDate(st.startDateStruct?.date, true)))}
+            ${fact('Primary completion', esc(fmtDate(st.primaryCompletionDateStruct?.date, true) + (st.primaryCompletionDateStruct?.type === 'ESTIMATED' ? ' (est.)' : '')))}
+          </dl>
+        </section>
+
+        <section class="sh-flag ${flagged.length ? '' : 'is-empty'}">
+          <h2>For Discussion</h2>
+          ${!answered.length ? '<p>The patient hasn’t gone through the eligibility checklist yet. The full list of requirements is below.</p>'
+            : flagged.length ? `<p>The patient marked these as unsure or possibly disqualifying:</p>
+              <ul>${flagged.map(c => `<li>${answerTag(c)}<span><small>${c.side === 'i' ? 'Inclusion' : 'Exclusion'}</small>${esc(c.text)}</span></li>`).join('')}</ul>`
+            : `<p>Nothing flagged. The patient’s ${plural(answered.length, 'answer')} all point toward eligibility.</p>`}
+        </section>
+
+        ${arms.length ? `
+          <section class="sh-sec">
+            <h2>Arms and Interventions</h2>
+            <table class="sh-table">
+              <thead><tr><th>Arm</th><th>Type</th><th>Intervention</th></tr></thead>
+              <tbody>${arms.map(a => `<tr><td>${esc(a.label)}</td><td>${esc(ARM_TYPE[a.type] ?? '')}</td><td>${esc((a.interventionNames ?? []).join('; '))}</td></tr>`).join('')}</tbody>
+            </table>
+          </section>` : ''}
+
+        ${outcomes.length ? `
+          <section class="sh-sec">
+            <h2>Primary ${outcomes.length === 1 ? 'Outcome' : 'Outcomes'}</h2>
+            <ul class="sh-outcomes">${outcomes.slice(0, 3).map(o => `<li><span>${esc(unescapeMd(o.measure))}</span>${o.timeFrame ? `<small>${esc(o.timeFrame)}</small>` : ''}</li>`).join('')}</ul>
+          </section>` : ''}
+
+        <section class="sh-sec">
+          <h2>Eligibility, With the Patient’s Answers</h2>
+          <p class="sh-note">${crit ? `Answered ${fmtNum(answered.length)} of ${fmtNum(answerable.length)}. These are self-reported and are not a screening determination. The study team confirms eligibility at screening.` : 'The criteria couldn’t be split into a list, so they appear as written.'}</p>
+          ${crit ? rows.map(r => `
+            <h3>${r.side === 'i' ? 'Inclusion criteria' : 'Exclusion criteria'}</h3>
+            <table class="sh-table sh-crit">
+              <tbody>${r.items.map(c => `<tr class="${c.head ? 'head' : ''} ${c.sub ? 'sub' : ''} ${c.a ? 'has-a' : 'no-a'}"><td>${esc(c.text)}</td><td>${answerTag(c)}</td></tr>`).join('')}</tbody>
+            </table>`).join('')
+            : `<div class="sh-raw">${esc(unescapeMd(elig.eligibilityCriteria ?? 'No eligibility criteria were provided.'))}</div>`}
+        </section>
+
+        <section class="sh-bottom">
+          <div>
+            <h2>Contacts</h2>
+            ${nearest ? `<div class="sh-contact"><small>Nearest open site${nearest.mi != null ? `, ${esc(fmtMiles(nearest.mi))}` : ''}</small><b>${esc(nearest.facility ?? 'Study site')}</b>${esc([nearest.city, STATE_ABBR[nearest.state] ?? nearest.state].filter(Boolean).join(', '))}${(nearest.contacts ?? [])[0] ? `<br>${contactLine(nearest.contacts[0])}` : ''}</div>` : ''}
+            ${central ? `<div class="sh-contact"><small>Central contact</small>${contactLine(central)}</div>` : ''}
+            ${!nearest && !central ? '<p class="sh-note">No contact is listed on the record.</p>' : ''}
+          </div>
+          <div>
+            <h2>Full Record</h2>
+            <div class="sh-lookup">
+              <span>clinicaltrials.gov/study/</span>
+              <span class="mono">${esc(idm.nctId)}</span>
+              <small>Last updated on the registry ${esc(fmtDate(st.lastUpdatePostDateStruct?.date, true))}</small>
+            </div>
+          </div>
+          <div class="sh-notes">
+            <h2>Clinician Notes</h2>
+            <div class="lines"><i></i><i></i><i></i><i></i></div>
+          </div>
+        </section>
+
+        <footer class="sh-foot">
+          Prepared with Northstar, an independent design concept not affiliated with the National Library of Medicine, NIH, or the study sponsor. Study details come from ClinicalTrials.gov${version?.dataTimestamp ? `, data as of ${esc(new Date(version.dataTimestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. Answers are the patient’s own and have not been reviewed.
+        </footer>
+      </article>`;
+  }
+
+  function fact(k, v) { return v ? `<div><dt>${k}</dt><dd>${v}</dd></div>` : ''; }
+
+  $$('#viewToggle .chip').forEach(b => b.addEventListener('click', () => {
+    $$('#viewToggle .chip').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    document.body.classList.toggle('answered-only', b.dataset.view === 'answered');
+  }));
+  $('#printBtn').addEventListener('click', () => print());
+
+  load();
+</script>
+</body>
+</html>

@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northstar · Studies</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%230F3E17%22/%3E%3Cg%20transform%3D%22translate%284%204%29%22%20color%3D%22%23B1DBB8%22%3E%3Cpath%20d%3D%22M12%202.5%2015.4%2012H8.6zM13.7%2012a1.7%201.7%200%200%200-3.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22/%3E%3Cpath%20d%3D%22M8.6%2012h6.8L12%2021.5zM10.3%2012a1.7%201.7%200%200%200%203.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22%20opacity%3D%22.45%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<main>
+  <section class="query-bar">
+    <div class="wrap">
+      <form id="q" autocomplete="off">
+        <p class="query-sentence">
+          Studies about
+          <span class="slot slot-cond combo"><label class="sr-only" for="cond">Condition</label><input id="cond" placeholder="a condition"></span>
+          <span class="slot combo"><button type="button" class="slot-btn" id="dist" aria-label="How far"><span data-label></span><span data-icon="chev"></span></button></span>
+          <span id="locWord">near</span>
+          <span class="slot slot-loc combo"><label class="sr-only" for="loc">Your city</label><input id="loc" placeholder="your city"></span>
+          <button type="submit" class="sr-only">Search</button>
+        </p>
+      </form>
+
+      <div class="filters" role="group" aria-label="Filters">
+        <button class="chip" id="fSoon" aria-pressed="false">Include Opening Soon</button>
+        <span class="divider-v"></span>
+        <span class="chip-group-label">Phase</span>
+        <button class="chip" data-phase="PHASE1" aria-pressed="false">1 · Safety</button>
+        <button class="chip" data-phase="PHASE2" aria-pressed="false">2 · Does It Work</button>
+        <button class="chip" data-phase="PHASE3" aria-pressed="false">3 · Is It Better</button>
+        <button class="chip" data-phase="PHASE4" aria-pressed="false">4 · Approved</button>
+        <span class="divider-v"></span>
+        <label class="age-field">My Age <input id="fAge" type="number" min="0" max="120" inputmode="numeric" aria-label="Your age"></label>
+        <span class="chip-group-label">I Am</span>
+        <button class="chip" data-sex="FEMALE" aria-pressed="false">Female</button>
+        <button class="chip" data-sex="MALE" aria-pressed="false">Male</button>
+        <button class="chip" data-healthy aria-pressed="false">Healthy Volunteer</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap results-layout">
+    <section aria-live="polite">
+      <div class="count-line">
+        <h1 id="countTitle"><span class="muted">Looking…</span></h1>
+        <span class="combo"><button type="button" class="chip" id="sort"><span data-label></span><span data-icon="chev"></span></button></span>
+      </div>
+      <p class="where-note" id="looseNote" hidden></p>
+      <ol class="study-list" id="list"></ol>
+      <div class="load-more" id="more" hidden><button class="btn btn-secondary">Show More Studies</button></div>
+    </section>
+
+    <aside class="map-col" aria-label="Map of study sites">
+      <div class="map-sticky">
+        <div id="map"></div>
+        <div class="map-legend" id="legend"><span><i style="background:var(--forest)"></i>Nearest site for each study</span></div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="assets/app.js"></script>
+<script>
+  $$('[data-icon]').forEach(el => { el.outerHTML = I[el.dataset.icon]; });
+  mountChrome('find');
+
+  /* ---------- State from URL ---------- */
+  const params = new URLSearchParams(location.search);
+  const num = v => (v === null || v === '' ? null : Number(v));
+  const S = {
+    cond:   params.get('cond') ?? '',
+    loc:    params.get('loc') ?? '',
+    lat:    num(params.get('lat')),
+    lon:    num(params.get('lon')),
+    // 'us' (default) or 'world' for a whole region, or a radius in miles around the city.
+    dist:   ({ '0': 'world' })[params.get('dist')] ?? params.get('dist') ?? 'us',
+    soon:   params.get('soon') === '1',
+    phase:  (params.get('phase') ?? '').split(',').filter(Boolean),
+    age:    num(params.get('age')),
+    sex:    params.get('sex') ?? '',
+    healthy:params.get('healthy') === '1',
+    sort:   params.get('sort') ?? 'best',
+  };
+  const hasGeo = () => S.lat != null && S.lon != null;
+  if (/^\d+$/.test(S.dist) && !hasGeo()) S.dist = 'us';
+  // Until someone picks a sort, a city means closest first.
+  let sortExplicit = params.has('sort');
+  const defaultSort = () => { if (!sortExplicit) S.sort = hasGeo() ? 'near' : 'best'; };
+  defaultSort();
+  const byMiles = () => hasGeo() && /^\d+$/.test(S.dist);
+
+  function syncUrl() {
+    const out = {
+      cond: S.cond, loc: hasGeo() ? S.loc : '', lat: S.lat ?? '', lon: S.lon ?? '', dist: S.dist,
+      soon: S.soon ? '1' : '', phase: S.phase.join(','), age: S.age ?? '', sex: S.sex, healthy: S.healthy ? '1' : '',
+      sort: sortExplicit ? S.sort : '',
+    };
+    history.replaceState(null, '', searchToUrl(out));
+    saveSearch({ cond: S.cond, loc: out.loc, lat: out.lat, lon: out.lon, dist: S.dist });
+    document.title = S.cond ? `Northstar · ${S.cond} Studies` : 'Northstar · Studies';
+  }
+
+  /* ---------- Query sentence ---------- */
+  const condEl = $('#cond'), locEl = $('#loc');
+  condEl.value = S.cond;
+  locEl.value = hasGeo() ? S.loc : '';
+  const fitCond = autosize(condEl, 10), fitLoc = autosize(locEl, 8);
+  let pendingGeo = null;
+
+  autocomplete(condEl, { fetch: suggestConditions, pick: v => { condEl.value = v; fitCond(); submit(); } });
+  autocomplete(locEl, {
+    fetch: geocode, render: r => esc(r.label),
+    pick: r => { locEl.value = r.label; fitLoc(); pendingGeo = r; submit(); },
+  });
+  locEl.addEventListener('input', () => { pendingGeo = null; });
+
+  const DISTANCES = [
+    { value: 'us', label: 'anywhere in the US' }, { value: 'world', label: 'anywhere in the world' },
+    { value: '25', label: 'within 25 miles' }, { value: '50', label: 'within 50 miles' },
+    { value: '100', label: 'within 100 miles' }, { value: '250', label: 'within 250 miles' },
+    { value: '500', label: 'within 500 miles' },
+  ];
+  // "anywhere in the US near Austin" vs "within 50 miles of Austin"
+  const paintLocWord = () => { $('#locWord').textContent = /^\d+$/.test(S.dist) ? 'of' : 'near'; };
+  const distDD = dropdown($('#dist'), {
+    options: DISTANCES, value: S.dist,
+    onChange: v => {
+      S.dist = v; paintLocWord();
+      if (/^\d+$/.test(v) && !hasGeo()) { locEl.focus(); toast('Add your city to search by distance.'); return; }
+      run();
+    },
+  });
+  paintLocWord();
+
+  async function submit() {
+    S.cond = condEl.value.trim();
+    const loc = locEl.value.trim();
+    if (!loc) { S.loc = ''; S.lat = S.lon = null; }
+    else if (pendingGeo) { Object.assign(S, { loc: pendingGeo.label, lat: pendingGeo.lat, lon: pendingGeo.lon }); }
+    else if (loc !== S.loc || !hasGeo()) {
+      const [hit] = await geocode(loc);
+      if (hit) Object.assign(S, { loc: hit.label, lat: hit.lat, lon: hit.lon });
+      else { toast(`We couldn’t find that place, so we’re showing studies ${S.dist === 'world' ? 'everywhere' : 'across the US'}.`); S.loc = ''; S.lat = S.lon = null; locEl.value = ''; fitLoc(); }
+    }
+    pendingGeo = null;
+    // A radius needs a city. Without one, fall back to the whole country.
+    if (/^\d+$/.test(S.dist) && !hasGeo()) { S.dist = 'us'; distDD.value = 'us'; paintLocWord(); }
+    run();
+  }
+  $('#q').addEventListener('submit', e => { e.preventDefault(); submit(); });
+
+  /* ---------- Filters ---------- */
+  const soonBtn = $('#fSoon');
+  soonBtn.setAttribute('aria-pressed', String(S.soon));
+  soonBtn.addEventListener('click', () => { S.soon = !S.soon; soonBtn.setAttribute('aria-pressed', String(S.soon)); run(); });
+
+  $$('[data-phase]').forEach(b => {
+    b.setAttribute('aria-pressed', String(S.phase.includes(b.dataset.phase)));
+    b.addEventListener('click', () => {
+      const p = b.dataset.phase;
+      S.phase = S.phase.includes(p) ? S.phase.filter(x => x !== p) : [...S.phase, p];
+      b.setAttribute('aria-pressed', String(S.phase.includes(p)));
+      run();
+    });
+  });
+
+  $$('[data-sex]').forEach(b => {
+    b.setAttribute('aria-pressed', String(S.sex === b.dataset.sex));
+    b.addEventListener('click', () => {
+      S.sex = S.sex === b.dataset.sex ? '' : b.dataset.sex;
+      $$('[data-sex]').forEach(x => x.setAttribute('aria-pressed', String(S.sex === x.dataset.sex)));
+      run();
+    });
+  });
+
+  const healthyBtn = $('[data-healthy]');
+  healthyBtn.setAttribute('aria-pressed', String(S.healthy));
+  healthyBtn.addEventListener('click', () => { S.healthy = !S.healthy; healthyBtn.setAttribute('aria-pressed', String(S.healthy)); run(); });
+
+  const ageEl = $('#fAge');
+  if (S.age != null) ageEl.value = S.age;
+  let ageTimer;
+  ageEl.addEventListener('input', () => {
+    clearTimeout(ageTimer);
+    ageTimer = setTimeout(() => {
+      const v = ageEl.value.trim();
+      S.age = v === '' ? null : Math.max(0, Math.min(120, Math.round(+v)));
+      run();
+    }, 450);
+  });
+
+  const sortDD = dropdown($('#sort'), {
+    options: [{ value: 'best', label: 'Best Match' }, { value: 'near', label: 'Closest First' }, { value: 'new', label: 'Newest First' }],
+    value: S.sort,
+    onChange: v => {
+      if (v === 'near' && !hasGeo()) { sortDD.value = S.sort; locEl.focus(); toast('Add your city to sort by distance.'); return; }
+      S.sort = v; sortExplicit = true; run();
+    },
+  });
+
+  /* ---------- Fetch ---------- */
+  const FIELDS = [
+    'NCTId', 'BriefTitle', 'OverallStatus', 'Phase', 'StudyType', 'LeadSponsorName', 'BriefSummary',
+    'MinimumAge', 'MaximumAge', 'Sex', 'HealthyVolunteers', 'EnrollmentCount', 'InterventionType',
+    'LocationFacility', 'LocationCity', 'LocationState', 'LocationCountry', 'LocationGeoPoint', 'LocationStatus', 'StudyFirstPostDate',
+  ].join(',');
+
+  function buildParams() {
+    const adv = [];
+    if (S.age != null) {
+      const a = `${S.age} years`;
+      adv.push(`(AREA[MinimumAge]RANGE[MIN, ${a}] OR AREA[MinimumAge]MISSING)`);
+      adv.push(`(AREA[MaximumAge]RANGE[${a}, MAX] OR AREA[MaximumAge]MISSING)`);
+    }
+    if (S.sex) adv.push(`(AREA[Sex]${S.sex} OR AREA[Sex]ALL)`);
+    if (S.phase.length) adv.push(`(${S.phase.map(p => `AREA[Phase]${p}`).join(' OR ')})`);
+    if (S.healthy) adv.push('AREA[HealthyVolunteers]true');
+    if (S.dist !== 'world' && !byMiles()) adv.push('AREA[LocationCountry]"United States"');
+    return {
+      'query.cond': condQuery(S.cond, loose),
+      'filter.overallStatus': S.soon ? 'RECRUITING|NOT_YET_RECRUITING' : 'RECRUITING',
+      'filter.geo': byMiles() ? `distance(${S.lat},${S.lon},${S.dist}mi)` : '',
+      'filter.advanced': adv.join(' AND '),
+      sort: S.sort === 'new' ? 'StudyFirstPostDate:desc' : '',
+      fields: FIELDS,
+      pageSize: '20',
+      countTotal: 'true',
+    };
+  }
+
+  let studies = [], nextToken = null, total = 0, runSeq = 0, near = null;
+  let loose = false; // true once an exact-phrase search came back empty and we widened it
+  const PAGE = 20;
+
+  /* ---------- Closest first ----------
+     The API can filter by radius but can't sort by distance. A radius search returns exactly the
+     studies with a site that close, so loading rings from the inside out and sorting each ring
+     by its nearest site gives a true nearest-first list. */
+  const RINGS = [10, 25, 50, 100, 250, 500, 1000, 2500];
+  const RING_CAP = 1000; // past this a ring is loaded partially, so its order is approximate
+  const byMi = (a, b) => (a.nearest?.mi ?? 1e9) - (b.nearest?.mi ?? 1e9);
+
+  async function startNear(base) {
+    const radii = byMiles() ? [...RINGS.filter(r => r < +S.dist), +S.dist] : RINGS;
+    const ringParams = r => ({ ...base, 'filter.geo': `distance(${S.lat},${S.lon},${r}mi)` });
+    const counts = await Promise.all(radii.map(r =>
+      api('/studies', { ...ringParams(r), pageSize: '1', fields: 'NCTId' }).then(d => d.totalCount ?? 0)));
+    return { base, ringParams, rings: radii.map((r, i) => ({ r, count: counts[i] })), next: 0, seen: new Set(), queue: [], tailToken: '', tailDone: byMiles() };
+  }
+
+  function take(nr, raw) {
+    const fresh = raw.filter(x => !nr.seen.has(x.protocolSection.identificationModule.nctId)).map(shape);
+    fresh.forEach(x => nr.seen.add(x.id));
+    nr.queue.push(...fresh.sort(byMi));
+  }
+
+  async function fillNear(nr, n) {
+    while (nr.queue.length < n) {
+      if (nr.next < nr.rings.length) {
+        // Jump straight to a wider ring when this one can't fill the page; the wider ring includes it.
+        let i = nr.next;
+        const need = n - nr.queue.length;
+        while (i + 1 < nr.rings.length && nr.rings[i].count - nr.seen.size < need && nr.rings[i + 1].count <= RING_CAP) i++;
+        nr.next = i + 1;
+        if (nr.rings[i].count <= nr.seen.size) continue;
+        let raw = [], token = '';
+        do {
+          const d = await api('/studies', { ...nr.ringParams(nr.rings[i].r), pageSize: '250', countTotal: '', pageToken: token });
+          raw = raw.concat(d.studies ?? []);
+          token = d.nextPageToken ?? '';
+        } while (token && raw.length < RING_CAP);
+        take(nr, raw);
+      } else if (!nr.tailDone) {
+        // Beyond the widest ring: whatever is left in the region, a page at a time.
+        const d = await api('/studies', { ...nr.base, pageSize: '100', countTotal: '', pageToken: nr.tailToken });
+        nr.tailToken = d.nextPageToken ?? '';
+        nr.tailDone = !nr.tailToken;
+        take(nr, d.studies ?? []);
+      } else break;
+    }
+  }
+
+  const hasMore = () => near
+    ? near.queue.length > 0 || near.rings.slice(near.next).some(r => r.count > near.seen.size) || (!near.tailDone && near.seen.size < total)
+    : !!nextToken;
+
+  async function run(widened = false) {
+    if (!widened) loose = false;
+    defaultSort();
+    sortDD.value = S.sort;
+    syncUrl();
+    const mine = ++runSeq;
+    studies = []; nextToken = null; near = null;
+    $('#more').hidden = true;
+    $('#countTitle').innerHTML = '<span class="muted">Looking…</span>';
+    $('#list').innerHTML = '<li class="skeleton"></li>'.repeat(4);
+    clearMap();
+    try {
+      if (S.sort === 'near' && hasGeo()) {
+        const base = buildParams();
+        const [d, nr] = await Promise.all([api('/studies', { ...base, pageSize: '1', fields: 'NCTId' }), startNear(base)]);
+        if (mine !== runSeq) return;
+        total = d.totalCount ?? 0;
+        if (!total && !loose && isPhrase(S.cond)) { loose = true; return run(true); }
+        await fillNear(nr, PAGE);
+        if (mine !== runSeq) return;
+        near = nr;
+        studies = nr.queue.splice(0, PAGE);
+        render();
+        return;
+      }
+      const d = await api('/studies', buildParams());
+      if (mine !== runSeq) return;
+      total = d.totalCount ?? 0;
+      if (!total && !loose && isPhrase(S.cond)) { loose = true; return run(true); }
+      studies = (d.studies ?? []).map(shape);
+      nextToken = d.nextPageToken ?? null;
+      render();
+    } catch (err) {
+      if (mine !== runSeq) return;
+      $('#countTitle').textContent = 'Something went wrong';
+      $('#list').innerHTML = `<li class="state"><h2>We couldn’t reach ClinicalTrials.gov</h2><p>${esc(err.message)}. This is usually temporary.</p><button class="btn" onclick="run()">Try Again</button></li>`;
+    }
+  }
+
+  async function loadMore() {
+    if (!hasMore()) return;
+    const btn = $('#more button');
+    btn.textContent = 'Loading…';
+    try {
+      if (near) {
+        const nr = near;
+        await fillNear(nr, PAGE);
+        if (nr !== near) return;
+        const add = nr.queue.splice(0, PAGE);
+        studies = studies.concat(add);
+        render(studies.length - add.length);
+        return;
+      }
+      const d = await api('/studies', { ...buildParams(), pageToken: nextToken, countTotal: '' });
+      studies = studies.concat((d.studies ?? []).map(shape));
+      nextToken = d.nextPageToken ?? null;
+      render(studies.length - (d.studies?.length ?? 0));
+    } catch { toast('Couldn’t load more studies. Try again.'); }
+    btn.textContent = 'Show More Studies';
+  }
+  $('#more button').addEventListener('click', loadMore);
+
+  /* ---------- Shape one API study into what the card needs ---------- */
+  function shape(raw) {
+    const p = raw.protocolSection;
+    const usOnly = S.dist === 'us';
+    const locs = (p.contactsLocationsModule?.locations ?? []).filter(l => l.geoPoint && (!usOnly || l.country === 'United States'));
+    const allLocs = p.contactsLocationsModule?.locations ?? [];
+    let nearest = null;
+    if (hasGeo() && locs.length) {
+      const me = { lat: S.lat, lon: S.lon };
+      for (const l of locs) {
+        const mi = milesBetween(me, { lat: l.geoPoint.lat, lon: l.geoPoint.lon });
+        const openBonus = l.status === 'RECRUITING' ? 0 : 0.5; // prefer open sites on near-ties
+        if (!nearest || mi + openBonus < nearest.mi + nearest.bonus) nearest = { ...l, mi, bonus: openBonus };
+      }
+    } else if (locs.length) {
+      nearest = locs.find(l => l.status === 'RECRUITING') ?? locs[0];
+    }
+    return {
+      id: p.identificationModule.nctId,
+      title: p.identificationModule.briefTitle,
+      status: p.statusModule?.overallStatus,
+      posted: p.statusModule?.studyFirstPostDateStruct?.date,
+      phases: p.designModule?.phases ?? [],
+      type: p.designModule?.studyType,
+      enroll: p.designModule?.enrollmentInfo?.count,
+      sponsor: p.sponsorCollaboratorsModule?.leadSponsor?.name,
+      summary: unescapeMd(p.descriptionModule?.briefSummary ?? ''),
+      minAge: p.eligibilityModule?.minimumAge,
+      maxAge: p.eligibilityModule?.maximumAge,
+      sex: p.eligibilityModule?.sex,
+      healthy: p.eligibilityModule?.healthyVolunteers,
+      kinds: [...new Set((p.armsInterventionsModule?.interventions ?? []).map(i => i.type))].filter(t => t !== 'OTHER'),
+      siteCount: allLocs.length,
+      nearest,
+    };
+  }
+
+  /* ---------- Render ---------- */
+  function render(appendFrom = 0) {
+    const sorted = studies; // closest-first lists arrive already in distance order
+
+    const region = S.dist === 'world' ? ' worldwide' : ' in the US';
+    const where = byMiles() ? ` within ${S.dist} miles of ${esc(S.loc)}` : region;
+    const verb = S.soon ? 'are recruiting or opening soon' : 'are recruiting';
+    $('#countTitle').innerHTML = total
+      ? `<span class="num">${fmtNum(total)}</span> ${total === 1 ? 'study' : 'studies'} ${total === 1 ? verb.replace('are', 'is') : verb}${where}`
+      : 'No studies match yet';
+    $('#looseNote').hidden = !(loose && total);
+    $('#looseNote').textContent = `Nothing uses the exact words “${S.cond}”, so these studies match some of them.`;
+
+    if (!studies.length) {
+      $('#list').innerHTML = `<li class="state">
+        <h2>Nothing matches all of that</h2>
+        <p>Try a wider distance, remove a filter, or use a broader term like “cancer” instead of a specific type.</p>
+        ${S.dist !== 'world' ? `<button class="btn" id="widen">${byMiles() ? 'Search Anywhere in the US' : 'Search Worldwide'}</button>` : ''}
+      </li>`;
+      $('#widen')?.addEventListener('click', () => { S.dist = byMiles() ? 'us' : 'world'; distDD.value = S.dist; paintLocWord(); run(); });
+      $('#more').hidden = true;
+      return;
+    }
+
+    if (appendFrom) $('#list').insertAdjacentHTML('beforeend', sorted.slice(appendFrom).map((s, i) => card(s, i)).join(''));
+    else $('#list').innerHTML = sorted.map((s, i) => card(s, i)).join('');
+    $('#more').hidden = !hasMore();
+    $('#more button').textContent = hasMore() ? `Show More Studies (${fmtNum(studies.length)} of ${fmtNum(total)})` : '';
+    drawMap(sorted);
+  }
+
+  function card(s, i) {
+    const phase = phaseLabel(s.phases, s.type);
+    const kinds = s.kinds.slice(0, 2).map(k => `<span class="tag tag-line">${esc(INTERVENTION[k] ?? k)}</span>`).join('');
+    const near = s.nearest
+      ? `<span>${I.pin}<b>${esc(s.nearest.city ?? s.nearest.facility ?? '')}${s.nearest.state ? `, ${esc(STATE_ABBR[s.nearest.state] ?? s.nearest.state)}` : ''}</b>${s.nearest.mi != null ? ` ${fmtMiles(s.nearest.mi)}` : ''}${s.siteCount > 1 ? ` <span class="muted">+${fmtNum(s.siteCount - 1)} more</span>` : ''}</span>`
+      : s.siteCount ? `<span>${I.pin}${plural(s.siteCount, 'site')}</span>` : '';
+    const who = `${ageRange(s.minAge, s.maxAge)}${s.sex && s.sex !== 'ALL' ? `, ${SEX[s.sex].toLowerCase()}` : ''}`;
+    return `<li><a class="study-card" href="study.html?id=${esc(s.id)}" data-id="${esc(s.id)}" style="--i:${i}">
+      <div class="card-top">
+        ${statusTag(s.status)}
+        ${phase ? `<span class="tag tag-slate">${esc(phase)}</span>` : ''}
+        ${kinds}
+        <span class="nct">${esc(s.id)}</span>
+      </div>
+      <h2>${esc(s.title)}</h2>
+      ${s.sponsor ? `<p class="card-sponsor">Run by ${esc(s.sponsor)}</p>` : ''}
+      ${s.summary ? `<p class="card-summary">${esc(s.summary)}</p>` : ''}
+      <div class="card-facts">
+        ${near}
+        <span>${I.person}${esc(who)}</span>
+        ${s.enroll ? `<span>${I.people}${fmtNum(s.enroll)} people</span>` : ''}
+        ${s.healthy ? `<span>${I.heart}Healthy volunteers welcome</span>` : ''}
+      </div>
+    </a></li>`;
+  }
+
+  /* ---------- Map ---------- */
+  const map = makeMap($('#map'));
+  const layer = L.layerGroup().addTo(map);
+  const markers = new Map();
+
+  function clearMap() { layer.clearLayers(); markers.clear(); }
+
+  function drawMap(list) {
+    clearMap();
+    map.invalidateSize();
+    const pts = [];
+    if (hasGeo()) {
+      youMarker(S.lat, S.lon).bindTooltip('You', { direction: 'top', offset: [0, -8] }).addTo(layer);
+      pts.push([S.lat, S.lon]);
+      if (byMiles()) {
+        L.circle([S.lat, S.lon], { radius: +S.dist * 1609.34, color: '#0F3E17', weight: 1, opacity: .25, fillColor: '#B1DBB8', fillOpacity: .12, interactive: false }).addTo(layer);
+      }
+    }
+    for (const s of list) {
+      const g = s.nearest?.geoPoint;
+      if (!g) continue;
+      const m = dotMarker(g.lat, g.lon).addTo(layer);
+      m.bindPopup(`<b>${esc(s.title)}</b>${esc(s.nearest.facility ?? '')}${s.nearest.mi != null ? `, ${fmtMiles(s.nearest.mi)}` : ''}<br><a href="study.html?id=${esc(s.id)}">View study</a>`, { maxWidth: 260 });
+      m.on('mouseover', () => highlight(s.id, true));
+      m.on('mouseout', () => highlight(s.id, false));
+      m.on('click', () => {
+        const el = $(`.study-card[data-id="${s.id}"]`);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      markers.set(s.id, m);
+      pts.push([g.lat, g.lon]);
+    }
+    if (byMiles()) {
+      map.fitBounds(L.latLng(S.lat, S.lon).toBounds(+S.dist * 1609.34 * 2.1), { animate: false, padding: [20, 20] });
+    } else if (pts.length > 1) {
+      map.fitBounds(pts, { animate: false, padding: [40, 40], maxZoom: 9 });
+    } else if (pts.length === 1) {
+      map.setView(pts[0], 8, { animate: false });
+    }
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+
+  function highlight(id, on) {
+    $(`.study-card[data-id="${id}"]`)?.classList.toggle('hot', on);
+    markers.get(id)?.getElement()?.querySelector('.pin')?.classList.toggle('hot', on);
+    if (on) markers.get(id)?.setZIndexOffset(900); else markers.get(id)?.setZIndexOffset(0);
+  }
+  $('#list').addEventListener('mouseover', e => { const c = e.target.closest('.study-card'); if (c) highlight(c.dataset.id, true); });
+  $('#list').addEventListener('mouseout',  e => { const c = e.target.closest('.study-card'); if (c && !c.contains(e.relatedTarget)) highlight(c.dataset.id, false); });
+
+  /* ---------- Go ---------- */
+  if (!S.cond) {
+    $('#countTitle').textContent = 'What are you looking for?';
+    $('#list').innerHTML = `<li class="state"><h2>Start with a condition</h2><p>Type a condition in the sentence above, like “asthma” or “breast cancer”. Add a city to see what’s near you.</p></li>`;
+    condEl.focus();
+  } else {
+    run();
+  }
+</script>
+</body>
+</html>
