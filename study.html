@@ -128,7 +128,9 @@
     return out;
   }
 
+  let studyData = null;
   function render(d) {
+    studyData = d;
     const p = d.protocolSection;
     const idm = p.identificationModule, st = p.statusModule ?? {}, des = p.designModule ?? {};
     const elig = p.eligibilityModule ?? {}, cl = p.contactsLocationsModule ?? {};
@@ -142,12 +144,15 @@
       ...l, i,
       mi: me && l.geoPoint ? milesBetween(me, l.geoPoint) : null,
     })).sort((a, b) => {
+      // Enrolling sites first, then by distance.
+      const open = (a.status === 'RECRUITING' ? 0 : 1) - (b.status === 'RECRUITING' ? 0 : 1);
+      if (open) return open;
       if (a.mi != null && b.mi != null) return a.mi - b.mi;
       if (a.mi != null) return -1;
       if (b.mi != null) return 1;
       return (a.status === 'RECRUITING' ? 0 : 1) - (b.status === 'RECRUITING' ? 0 : 1);
     });
-    const nearest = sites.find(s => s.mi != null);
+    const nearest = sites.find(s => s.mi != null && s.status === 'RECRUITING') ?? sites.find(s => s.mi != null);
     const openSites = sites.filter(s => s.status === 'RECRUITING').length;
 
     const tested = interventions.filter(i => !/placebo/i.test(i.name)).map(i => i.name);
@@ -161,11 +166,17 @@
     const critSeen = new Set();
     const critList = (items, side) => items.map((c, n) => {
       const key = `${side}${n}`, a = c.head ? '' : answers[key] ?? '';
-      return `<li class="${c.sub ? 'sub' : ''} ${c.head ? 'head' : ''} ${a ? `is-${rowState(key, a)}` : ''}" data-key="${key}">
-        <span>${glossify(esc(c.text), critSeen)}</span>
-        ${c.head ? '' : `<div class="ans" role="group" aria-label="Is this true for you?">${ANS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${a === v}">${l}</button>`).join('')}</div>`}
+      const cls = [c.sub && 'sub', c.head && 'head', a && `is-${rowState(key, a)}`].filter(Boolean).join(' ');
+      return `<li class="${cls}" data-key="${key}">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="txt">${glossify(esc(c.text), critSeen)}</span>
+        ${c.head ? '' : `<div class="ans" role="group" aria-label="${side === 'i' ? 'Is this true for you?' : 'Does this apply to you?'}">${ANS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${a === v}">${l}</button>`).join('')}</div>`}
       </li>`;
     }).join('');
+    const critGroup = (side, title, hint, items) => `<section class="crit-group" data-side="${side}">
+        <header><div><h3>${title}</h3><p>${hint}</p></div><span class="crit-count" data-total="${items.filter(c => !c.head).length}"></span></header>
+        ${items.length ? `<ul class="crit">${critList(items, side)}</ul>` : '<p class="muted crit-none">None listed</p>'}
+      </section>`;
 
     const contacts = (cl.centralContacts ?? []).slice(0, 2);
     // People you could write to: the study-wide contact first, then the closest open sites that list someone.
@@ -181,6 +192,10 @@
     const people = whoPeople(cl.overallOfficials, spons.responsibleParty);
     const design = designLines(p);
     const outcomes = p.outcomesModule?.primaryOutcomes ?? [];
+    const conds = p.conditionsModule?.conditions ?? [];
+    // Some names carry their own comma ("Ovarian Cancer, Epithelial"), so those lists use semicolons.
+    const condSep = conds.some(c => c.includes(',')) ? '; ' : ', ';
+    const focus = studyFocus(loadSearch().cond, idm.briefTitle, conds);
 
     const back = searchToUrl(loadSearch());
 
@@ -192,16 +207,18 @@
           <div>
             <div class="card-top" style="gap:6px">
               ${statusTag(st.overallStatus)}
-              ${phase ? `<span class="tag tag-slate">${esc(phase)}</span>` : ''}
-              ${[...new Set(interventions.map(i => i.type))].filter(t => t !== 'OTHER').slice(0, 2).map(t => `<span class="tag tag-line">${esc(INTERVENTION[t] ?? t)}</span>`).join('')}
+              ${phase ? `<span class="tag">${esc(phase)}</span>` : ''}
+              ${focus.label ? `<span class="tag">${esc(focus.label)}</span>` : ''}
+              ${[...new Set(interventions.map(i => i.type))].filter(t => t !== 'OTHER').slice(0, 2).map(t => `<span class="tag">${esc(INTERVENTION[t] ?? t)}</span>`).join('')}
             </div>
-            <h1 class="display">${esc(idm.briefTitle)}</h1>
-            ${idm.officialTitle && idm.officialTitle !== idm.briefTitle ? `<p class="official">Official title: ${esc(idm.officialTitle)}</p>` : ''}
+            <h1 class="display${idm.briefTitle.length > 90 ? ' t-long' : idm.briefTitle.length > 50 ? ' t-mid' : ''}">${esc(idm.briefTitle)}</h1>
+            ${idm.officialTitle && idm.officialTitle !== idm.briefTitle ? `<details class="official"><summary>Show Official Title ${I.chev}</summary><p>${esc(idm.officialTitle)}</p></details>` : ''}
             <div class="hero-meta">
               ${spons.leadSponsor?.name ? `<span>Run by <b>${esc(spons.leadSponsor.name)}</b></span>` : ''}
-              ${(p.conditionsModule?.conditions ?? []).length ? `<span>For <b>${esc(p.conditionsModule.conditions.slice(0, 3).join(', '))}</b></span>` : ''}
+              ${conds.length ? `<span>For <b>${esc(conds.slice(0, 3).join(condSep))}</b>${conds.length > 3 ? ` <button type="button" class="btn-link" id="moreConds" aria-expanded="false" aria-controls="condList">and ${fmtNum(conds.length - 3)} more</button>` : ''}</span>` : ''}
               <span class="mono">${esc(idm.nctId)}</span>
             </div>
+            ${conds.length > 3 ? `<p class="cond-list" id="condList" hidden><b>All ${fmtNum(conds.length)} conditions:</b> ${esc(conds.join(condSep))}.${focus.broad ? ' Who can join, including age and sex, is set for the whole study, so check that your condition is one of the groups.' : ''}</p>` : ''}
           </div>
 
           <aside class="contact-card">
@@ -215,9 +232,9 @@
               </div>`).join('') : officials.length ? officials.map(o => `
               <div class="contact-person"><strong>${esc(o.name)}</strong><span style="color:rgba(255,255,255,.7)">${esc(o.affiliation ?? '')}</span></div>`).join('') + `<div class="contact-person" style="color:rgba(255,255,255,.7)">No central contact is listed. Try the nearest site below, or ask your doctor.</div>`
               : `<div class="contact-person" style="color:rgba(255,255,255,.7)">No contact is listed. Try the nearest site below, or ask your doctor.</div>`}
-            <a class="btn btn-mint" href="#eligibility">See If I Can Join ${I.arrow}</a>
+            <a class="btn btn-mint" href="#eligibility" data-open-check="all">See If I Can Join ${I.arrow}</a>
             <a class="official-link" href="#reach">${I.mail}Get Help Writing to Them</a>
-            <a class="official-link" href="https://clinicaltrials.gov/study/${esc(idm.nctId)}" target="_blank" rel="noopener">View the Official Record ${I.ext}</a>
+            <a class="official-link" href="doctor.html?id=${esc(idm.nctId)}" data-open-brief>${I.print}For My Doctor</a>
           </aside>
         </div>
       </section>
@@ -239,7 +256,6 @@
         <div>
           <!-- Overview -->
           <section class="sec" id="overview">
-            <div class="section-kicker">Overview</div>
             <h2>What this study is about</h2>
             <div class="prose">${summaryParas.map(para).join('') || '<p>No summary was provided.</p>'}</div>
             ${detailParas.length ? `
@@ -248,7 +264,7 @@
               </details>` : ''}
 
             <div class="glance">
-              ${tested.length ? `<div class="glance-tile"><div class="k">${I.flask}Being tested</div><div class="v">${esc(tested.slice(0, 2).join(', '))}</div>${tested.length > 2 ? `<div class="s">and ${tested.length - 2} more</div>` : ''}</div>` : ''}
+              ${tested.length ? `<div class="glance-tile"><div class="k">${I.flask}Being tested</div><div class="v${tested.slice(0, 2).join(', ').length > 16 ? ' long' : ''}" title="${esc(tested.join(', '))}">${esc(tested.slice(0, 2).join(', '))}</div>${tested.length > 2 ? `<div class="s">and ${tested.length - 2} more</div>` : ''}</div>` : ''}
               <div class="glance-tile"><div class="k">${I.person}Who can join</div><div class="v">${esc(ageRange(elig.minimumAge, elig.maximumAge))}</div><div class="s">${esc(SEX[elig.sex] ?? 'All sexes')}${elig.healthyVolunteers ? ', healthy volunteers welcome' : ''}</div></div>
               ${des.enrollmentInfo?.count ? `<div class="glance-tile"><div class="k">${I.people}How many people</div><div class="v">${fmtNum(des.enrollmentInfo.count)}</div><div class="s">${des.enrollmentInfo.type === 'ESTIMATED' ? 'Planned' : 'Enrolled'}</div></div>` : ''}
               ${durationPhrase(st.startDateStruct?.date, st.primaryCompletionDateStruct?.date) ? `<div class="glance-tile"><div class="k">${I.clock}How long</div><div class="v">${durationPhrase(st.startDateStruct.date, st.primaryCompletionDateStruct.date)}</div><div class="s">Until main results</div></div>` : ''}
@@ -258,39 +274,33 @@
 
           <!-- Eligibility -->
           <section class="sec" id="eligibility">
-            <div class="section-kicker">Can I Join?</div>
             <h2>Who this study is looking for</h2>
             <div class="basics">
               <div class="basic"><span class="ic">${I.person}</span><span><small>Age</small><b>${esc(ageRange(elig.minimumAge, elig.maximumAge))}</b></span></div>
               <div class="basic"><span class="ic">${I.people}</span><span><small>Sex</small><b>${esc(SEX[elig.sex] ?? 'All sexes')}</b></span></div>
               <div class="basic"><span class="ic">${I.heart}</span><span><small>Healthy volunteers</small><b>${elig.healthyVolunteers ? 'Welcome' : 'Not accepted'}</b></span></div>
             </div>
-            <p class="where-note">${crit ? 'Answer Yes, No, or Not sure for each item, and skip anything you don’t know. Your answers stay on this device. Anything you’re not sure about becomes a question for the study team.' : 'The study team makes the final call, often after a screening visit.'}</p>
             ${crit ? `
-              <div class="elig-cols">
-                <div class="elig-col in">
-                  <header><span class="mark">${I.check}</span><h3>You may be able to join if</h3><span class="count">${crit.in.filter(c => !c.head).length}</span></header>
-                  <ul class="crit">${critList(crit.in, 'i') || '<li><span class="muted">None listed</span></li>'}</ul>
+              <div class="check-card" id="fit" aria-live="polite">
+                <div class="check-card-main">
+                  <h3 id="fitTitle"></h3>
+                  <p id="fitBody"></p>
+                  <div class="fit-bar" aria-hidden="true"><i class="f"></i><i class="b"></i><i class="u"></i></div>
+                  <p class="check-meta">Your answers stay on this device.</p>
                 </div>
-                <div class="elig-col out">
-                  <header><span class="mark">${I.x}</span><h3>You can’t join if</h3><span class="count">${crit.out.filter(c => !c.head).length}</span></header>
-                  <ul class="crit">${critList(crit.out, 'o') || '<li><span class="muted">None listed</span></li>'}</ul>
+                <div class="check-card-actions">
+                  <button type="button" class="btn" id="checkGo" data-open-check="all"></button>
+                  <a class="btn-link" href="doctor.html?id=${esc(idm.nctId)}" data-open-brief>${I.print}For My Doctor</a>
                 </div>
-              </div>` : elig.eligibilityCriteria ? `<div class="elig-col"><div class="elig-raw">${glossify(esc(unescapeMd(elig.eligibilityCriteria)), critSeen)}</div></div>` : '<p class="muted">No eligibility details were provided.</p>'}
-            ${crit ? `
-              <div class="fit" id="fit" aria-live="polite">
-                <div class="fit-bar" aria-hidden="true"><i class="f"></i><i class="b"></i><i class="u"></i></div>
-                <div><h3 id="fitTitle"></h3><p id="fitBody"></p></div>
-                <div class="fit-actions">
-                  <a class="btn btn-secondary btn-sm" href="doctor.html?id=${esc(idm.nctId)}">${I.print}For My Doctor</a>
-                  <a class="btn btn-sm" href="#reach">Reach Out ${I.arrow}</a>
-                </div>
-              </div>` : ''}
+              </div>
+              <template id="checkAll">
+                ${critGroup('i', 'What the study requires', 'Is each of these true for you?', crit.in)}
+                ${critGroup('o', 'What would rule you out', 'Does any of this apply to you? There are often exceptions, so a Yes here isn’t the final word.', crit.out)}
+              </template>` : `<p class="where-note">The study team makes the final call, often after a screening visit.</p>${elig.eligibilityCriteria ? `<div class="elig-col"><div class="elig-raw">${glossify(esc(unescapeMd(elig.eligibilityCriteria)), critSeen)}</div></div>` : '<p class="muted">No eligibility details were provided.</p>'}`}
           </section>
 
           <!-- Reach out -->
           <section class="sec" id="reach">
-            <div class="section-kicker">Reach Out</div>
             <h2>Reach out to the study team</h2>
             <p class="reach-lede">Asking questions doesn’t sign you up for anything. Here’s how it usually goes from here.</p>
             <ol class="steps">
@@ -340,33 +350,33 @@
 
           <!-- What happens -->
           <section class="sec" id="happens">
-            <div class="section-kicker">What Happens</div>
             <h2>What the study involves</h2>
             ${design.length ? `<ul class="design-lines">${design.map(([ic, t]) => `<li><span class="ic">${ic}</span><span>${glossify(esc(t), new Set())}</span></li>`).join('')}</ul>` : ''}
             ${arms.length ? `
               <h3>${arms.length === 1 ? 'The study group' : `The ${arms.length} study groups`}</h3>
               <div class="arms">${arms.map((a, n) => `
-                <div class="arm">
+                <div class="arm${n >= 3 && arms.length > 4 ? ' extra' : ''}">
                   <div class="arm-kind">${arms.length > 1 && !/^(group|arm|cohort|part)\b/i.test(a.label) ? `Group ${n + 1} · ` : ''}${esc(ARM[a.type] ?? 'Study group')}</div>
                   <h4>${esc(a.label)}</h4>
                   ${a.description ? `<p>${glossify(esc(unescapeMd(a.description)), new Set())}</p>` : ''}
                   ${(a.interventionNames ?? []).length ? `<div class="tags">${a.interventionNames.map(n => `<span class="tag">${esc(n.replace(/^[\w\s]+:\s*/, ''))}</span>`).join('')}</div>` : ''}
                 </div>`).join('')}
-              </div>` : ''}
+              </div>
+              ${arms.length > 4 ? `<button type="button" class="btn-link arms-more" aria-expanded="false">Show ${fmtNum(arms.length - 3)} More Groups ${I.chev}</button>` : ''}` : ''}
             ${outcomes.length ? `
               <div class="outcomes">
                 <h3>What they’re measuring</h3>
                 ${outcomes.slice(0, 4).map(o => `
                   <div class="outcome">
-                    <div class="when">${esc(o.timeFrame ?? '')}</div>
-                    <div class="what">${esc(unescapeMd(o.measure))}${o.description ? `<small>${esc(unescapeMd(o.description)).slice(0, 320)}${o.description.length > 320 ? '…' : ''}</small>` : ''}</div>
+                    <div class="what">${esc(unescapeMd(o.measure))}</div>
+                    ${o.timeFrame ? `<div class="when">${I.clock}${esc(o.timeFrame)}</div>` : ''}
+                    ${o.description ? `<small>${esc(unescapeMd(o.description)).slice(0, 320)}${o.description.length > 320 ? '…' : ''}</small>` : ''}
                   </div>`).join('')}
               </div>` : ''}
           </section>
 
           <!-- Who -->
           <section class="sec" id="who">
-            <div class="section-kicker">Who’s Running It</div>
             <h2>Who’s behind this study</h2>
             <div class="who-grid">
               ${spons.leadSponsor?.name ? `
@@ -406,10 +416,9 @@
 
           <!-- Where -->
           <section class="sec" id="where">
-            <div class="section-kicker">Where</div>
             <h2>${sites.length ? `${plural(sites.length, 'place')} to take part` : 'Where it happens'}</h2>
             ${sites.length ? `
-              <p class="where-note">${me ? `Sorted by distance from ${esc(me.label || 'you')}.` : 'Search with a city to sort these by distance.'} ${openSites ? `${fmtNum(openSites)} ${openSites === 1 ? 'is' : 'are'} enrolling now.` : ''}</p>
+              <p class="where-note">${openSites ? `${fmtNum(openSites)} ${openSites === 1 ? 'is' : 'are'} enrolling now${me ? `, sorted by distance from ${esc(me.label || 'you')}` : ''}.` : me ? `Sorted by distance from ${esc(me.label || 'you')}.` : ''}${me ? '' : ' Search with a city to sort these by distance.'}</p>
               <div class="where-grid">
                 <div class="site-map"><div id="siteMap"></div></div>
                 <ul class="site-list" id="siteList">
@@ -418,7 +427,8 @@
                     const docs = people.filter(c => /INVESTIGATOR/.test(c.role ?? ''));
                     const c = people.find(c => (c.phone || c.email) && !docs.includes(c)) ?? (s.contacts ?? []).find(c => c.phone || c.email);
                     const place = [s.city, STATE_ABBR[s.state] ?? s.state, s.country !== 'United States' ? s.country : ''].filter(Boolean).join(', ');
-                    return `<li data-i="${s.i}">
+                    const closed = openSites && openSites < sites.length && s.status !== 'RECRUITING';
+                    return `<li data-i="${s.i}"${closed ? ' class="closed"' : ''}>
                       <div class="row"><span class="fac">${esc(s.facility ?? 'Study site')}</span><span class="dist">${s.mi != null ? fmtMiles(s.mi) : ''}</span></div>
                       <div class="place">${esc(place)}${s.zip ? ` ${esc(s.zip)}` : ''} ${s.status ? statusTag(s.status) : ''}</div>
                       ${docs.length ? `<div class="site-docs">${docs.slice(0, 3).map(d => `<span><b>${esc(d.name)}</b>${d.role === 'SUB_INVESTIGATOR' ? ', investigator' : ', lead investigator here'}</span>`).join('')}</div>` : ''}
@@ -426,28 +436,27 @@
                       ${s.facility ? `<div class="site-links"><a href="https://maps.apple.com/?q=${encodeURIComponent([s.facility, place].join(', '))}" target="_blank" rel="noopener">Directions ${I.ext}</a><a href="${esc(webSearch([s.facility, place].join(' ')))}" target="_blank" rel="noopener">Find Website ${I.ext}</a>${docs[0] ? `<a href="${esc(webSearch(`${plainName(docs[0].name)} ${s.facility}`))}" target="_blank" rel="noopener">Look Up ${esc(plainName(docs[0].name))} ${I.ext}</a>` : ''}</div>` : ''}
                     </li>`;
                   }).join('')}
+                  ${openSites && openSites < sites.length ? `<li class="site-more"><button type="button" class="btn-link" id="showClosed">Show ${plural(sites.slice(0, 200).length - openSites, 'Site')} Not Enrolling ${I.chev}</button></li>` : ''}
                 </ul>
               </div>` : '<p class="muted">No locations have been listed yet.</p>'}
           </section>
 
           <!-- Timeline -->
           <section class="sec" id="timeline">
-            <div class="section-kicker">Timeline</div>
             <h2>Where the study is today</h2>
             <div class="timeline" id="tl"></div>
           </section>
 
           <!-- Details -->
           <section class="sec" id="details">
-            <div class="section-kicker">Details</div>
             <h2>For your doctor</h2>
             <div class="doc-cta">
               <p>Print a short summary of this study, with your checklist answers, to bring to your next appointment.</p>
-              <a class="btn btn-mint" href="doctor.html?id=${esc(idm.nctId)}">${I.print}Share With My Doctor</a>
+              <a class="btn btn-mint" href="doctor.html?id=${esc(idm.nctId)}" data-open-brief>${I.print}Share With My Doctor</a>
             </div>
             <div class="details-grid">
               <dl>
-                ${row('Study ID', `<span class="mono">${esc(idm.nctId)}</span>`)}
+                ${row('Study ID', `<a class="mono record-link" href="https://clinicaltrials.gov/study/${esc(idm.nctId)}" target="_blank" rel="noopener">${esc(idm.nctId)} ${I.ext}</a>`)}
                 ${row('Sponsor study ID', esc(idm.orgStudyIdInfo?.id))}
                 ${row('Lead sponsor', esc(spons.leadSponsor?.name))}
                 ${row('Collaborators', esc((spons.collaborators ?? []).map(c => c.name).join(', ')))}
@@ -470,6 +479,19 @@
       </div>`;
 
     wireChecklist(crit);
+    wireBrief();
+    $('#moreConds')?.addEventListener('click', e => {
+      const list = $('#condList'), open = list.hidden;
+      list.hidden = !open;
+      e.currentTarget.setAttribute('aria-expanded', String(open));
+      e.currentTarget.textContent = open ? 'show fewer' : `and ${fmtNum(conds.length - 3)} more`;
+    });
+    $('#showClosed')?.addEventListener('click', e => { $('#siteList').classList.add('show-closed'); e.currentTarget.closest('li').remove(); });
+    $('.arms-more')?.addEventListener('click', e => {
+      const btn = e.currentTarget, open = $('.arms').classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+      btn.innerHTML = open ? `Show Fewer Groups ${I.chev}` : `Show ${fmtNum(arms.length - 3)} More Groups ${I.chev}`;
+    });
     wireReach({ idm, recips, crit });
     drawTimeline(st);
     if (sites.length) drawSites(sites);
@@ -512,30 +534,298 @@
     return { tone: 'go', title: 'Looks like a fit', body: 'Based on your answers, you meet every listed requirement. The study team makes the final call at screening.' };
   }
 
+  /* ---------- Can I join? drawer ----------
+     The study page shows a summary card; the check opens in a drawer. "All Questions" (the default)
+     lists every requirement. "By Page" shows them PAGE_SIZE at a time, requirements first, then what
+     rules you out, and ends on a results page. Answers save as they're given. */
+  const PAGE_SIZE = 5;
   function wireChecklist(crit) {
     if (!crit) return;
-    function paint() {
-      const t = tally(crit), v = verdict(t);
-      const pct = n => `${t.total ? (n / t.total) * 100 : 0}%`;
-      $('#fit').dataset.tone = v.tone;
-      $('#fit .f').style.width = pct(t.fit.length);
-      $('#fit .b').style.width = pct(t.block.length);
-      $('#fit .u').style.width = pct(t.unsure.length);
-      $('#fitTitle').textContent = v.title;
-      $('#fitBody').textContent = v.body;
+
+    // Every answerable item in order. Each carries the group label above it ("Module 1, Part A") so a
+    // page can show it. A label covers the indented items right under it, or, when nothing under it
+    // is indented, everything up to the next label.
+    const steps = [];
+    for (const [side, items] of [['i', crit.in], ['o', crit.out]]) {
+      let heads = [], lastWasHead = false, mode = '';
+      items.forEach((c, i) => {
+        if (c.head) { if (!lastWasHead) heads = []; heads.push(c.text.replace(/:\s*$/, '')); lastWasHead = true; mode = ''; return; }
+        if (lastWasHead) mode = c.sub ? 'sub' : 'run';
+        else if (mode === 'sub' && !c.sub) heads = [];
+        lastWasHead = false;
+        steps.push({ key: side + i, side, text: c.text, sub: c.sub, ctx: heads.join(', ') });
+      });
     }
-    $$('.crit .ans button').forEach(btn => btn.addEventListener('click', () => {
-      const li = btn.closest('li'), key = li.dataset.key;
-      const v = answers[key] === btn.dataset.v ? '' : btn.dataset.v; // tap again to clear
+    // Pages never mix the two groups.
+    const pages = [];
+    for (const side of ['i', 'o']) {
+      const mine = steps.filter(x => x.side === side);
+      for (let i = 0; i < mine.length; i += PAGE_SIZE) pages.push({ side, items: mine.slice(i, i + PAGE_SIZE) });
+    }
+    pages.forEach(pg => { const same = pages.filter(x => x.side === pg.side); pg.n = same.indexOf(pg) + 1; pg.of = same.length; });
+
+    const drawer = document.createElement('div');
+    drawer.className = 'drawer-root';
+    drawer.innerHTML = `
+      <div class="drawer-backdrop" data-close></div>
+      <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" tabindex="-1">
+        <header class="drawer-head">
+          <div class="drawer-row">
+            <h2 id="drawerTitle">Can I Join?</h2>
+            <button type="button" class="drawer-close" data-close aria-label="Close">${I.x}</button>
+          </div>
+          <div class="drawer-row">
+            <div class="seg" role="tablist" aria-label="View">
+              <button type="button" role="tab" data-view="all" aria-selected="true">All Questions</button>
+              <button type="button" role="tab" data-view="page" aria-selected="false">By Page</button>
+            </div>
+            <span class="drawer-count" id="dCount"></span>
+          </div>
+          <div class="fit-bar" aria-hidden="true"><i class="f"></i><i class="b"></i><i class="u"></i></div>
+        </header>
+        <div class="drawer-body">
+          <div class="all-view" id="vAll">${$('#checkAll').innerHTML}</div>
+          <div class="page-view" id="vPage" hidden></div>
+        </div>
+        <footer class="drawer-foot" id="dFoot"></footer>
+      </aside>`;
+    drawer.hidden = true;
+    document.body.appendChild(drawer);
+    const panel = $('.drawer', drawer), body = $('.drawer-body', drawer), vAll = $('#vAll', drawer), vPage = $('#vPage', drawer), foot = $('#dFoot', drawer);
+    let view = 'all', page = 0, opener = null;
+
+    const unanswered = () => steps.filter(x => !answers[x.key]).length;
+
+    function setAnswer(key, v) {
       if (v) answers[key] = v; else delete answers[key];
       try { localStorage.setItem(CHECK_KEY, JSON.stringify(answers)); } catch {}
-      $$('button', li).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
-      li.classList.remove('is-fit', 'is-block', 'is-unsure');
-      if (v) li.classList.add(`is-${rowState(key, v)}`);
+      $$(`li[data-key="${key}"]`, drawer).forEach(li => {
+        $$('button', li).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+        li.classList.remove('is-fit', 'is-block', 'is-unsure');
+        if (v) li.classList.add(`is-${rowState(key, v)}`);
+      });
       paint();
       redrawLetter();
-    }));
+    }
+
+    function paint() {
+      const t = tally(crit), v = verdict(t), left = t.total - t.answered;
+      const pct = n => `${t.total ? (n / t.total) * 100 : 0}%`;
+      for (const bar of [...$$('.fit-bar', $('#fit')), ...$$('.drawer-head .fit-bar', drawer)]) {
+        $('.f', bar).style.width = pct(t.fit.length); $('.b', bar).style.width = pct(t.block.length); $('.u', bar).style.width = pct(t.unsure.length);
+      }
+      const card = $('#fit');
+      card.dataset.tone = t.answered ? v.tone : '';
+      card.dataset.state = !t.answered ? 'new' : left ? 'started' : 'done';
+      if (!t.answered) {
+        const mins = Math.max(1, Math.round(t.total * 8 / 60));
+        $('#fitTitle').textContent = 'See if you might qualify';
+        $('#fitBody').textContent = `${plural(t.total, 'question')} from the study’s requirements, about ${plural(mins, 'minute')}. Skip anything you don’t know.`;
+      } else { $('#fitTitle').textContent = v.title; $('#fitBody').textContent = v.body; }
+      $('#checkGo').innerHTML = !t.answered ? `Check If I Can Join ${I.arrow}` : left ? `Continue (${fmtNum(left)} Left) ${I.arrow}` : `Review My Answers ${I.arrow}`;
+      $('#dCount').textContent = `${fmtNum(t.answered)} of ${fmtNum(t.total)} answered`;
+      $$('.crit-group', vAll).forEach(g => {
+        const keys = $$('li:not(.head)', g).map(li => li.dataset.key), c = $('.crit-count', g);
+        c.textContent = `${fmtNum(keys.filter(k => answers[k]).length)} of ${fmtNum(+c.dataset.total)} answered`;
+      });
+      if (view === 'all') renderAllFoot(t, v);
+    }
+
+    const row = st => {
+      const a = answers[st.key] ?? '';
+      return `<li class="${[st.sub && 'sub', a && `is-${rowState(st.key, a)}`].filter(Boolean).join(' ')}" data-key="${st.key}">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="txt">${glossify(esc(st.text), new Set())}</span>
+        <div class="ans" role="group" aria-label="${st.side === 'i' ? 'Is this true for you?' : 'Does this apply to you?'}">${ANS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${a === v}">${l}</button>`).join('')}</div>
+      </li>`;
+    };
+
+    // All Questions: a pinned footer with where you stand and what to do next.
+    function renderAllFoot(t = tally(crit), v = verdict(t)) {
+      foot.innerHTML = `
+        <div class="foot-status ${t.answered ? `tone-${v.tone}` : ''}">${t.answered ? esc(v.title) : 'Answer what you know'}</div>
+        <div class="foot-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-open-brief>${I.print}For My Doctor</button>
+          <a class="btn btn-sm" href="#reach" data-close>Reach Out ${I.arrow}</a>
+        </div>`;
+    }
+
+    function renderPage() {
+      body.scrollTop = 0;
+      if (page >= pages.length) return renderResults();
+      const pg = pages[page];
+      let lastCtx = '';
+      vPage.innerHTML = `
+        <p class="page-kicker ${pg.side === 'o' ? 'out' : ''}">${pg.side === 'i' ? 'What the study requires' : 'What would rule you out'}${pg.of > 1 ? `, page ${pg.n} of ${pg.of}` : ''}</p>
+        <p class="page-ask">${pg.side === 'i' ? 'Is each of these true for you?' : 'Does any of this apply to you? A Yes here may rule you out, though there are often exceptions.'}</p>
+        <ul class="crit">${pg.items.map(st => {
+          const label = st.ctx && st.ctx !== lastCtx ? `<li class="head"><span class="dot" aria-hidden="true"></span><span class="txt">${esc(st.ctx)}</span></li>` : '';
+          lastCtx = st.ctx;
+          return label + row(st);
+        }).join('')}</ul>`;
+      const last = page === pages.length - 1;
+      foot.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>${I.back}Back</button>
+        <span class="foot-page">Page ${fmtNum(page + 1)} of ${fmtNum(pages.length)}</span>
+        <button type="button" class="btn btn-sm" data-page="${page + 1}">${last ? 'See Results' : 'Next'} ${I.arrow}</button>`;
+    }
+
+    function renderResults() {
+      const t = tally(crit), v = verdict(t), skipped = unanswered();
+      const list = (title, items) => items.length ? `<h4>${title}</h4><ul>${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+      vPage.innerHTML = `
+        <div class="results" data-tone="${t.answered ? v.tone : ''}">
+          <p class="page-kicker">${skipped ? `You skipped ${plural(skipped, 'question')}` : 'All questions answered'}</p>
+          <h3>${esc(t.answered ? v.title : 'Nothing answered yet')}</h3>
+          <p class="results-body">${esc(t.answered ? v.body : 'Answer what you know. Anything you skip can be a question for the study team.')}</p>
+          ${skipped ? `<button type="button" class="btn-link results-skip" data-page="${pages.findIndex(pg => pg.items.some(x => !answers[x.key]))}">Go to the Skipped Questions ${I.arrow}</button>` : ''}
+          ${list('May rule you out', t.block)}
+          ${list('To ask the study team', t.unsure)}
+        </div>`;
+      foot.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm" data-page="${pages.length - 1}">${I.back}Back</button>
+        <div class="foot-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-open-brief>${I.print}For My Doctor</button>
+          <a class="btn btn-sm" href="#reach" data-close>Reach Out ${I.arrow}</a>
+        </div>`;
+    }
+
+    function setView(v) {
+      view = v;
+      $$('.seg [data-view]', drawer).forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === v)));
+      vAll.hidden = v !== 'all'; vPage.hidden = v !== 'page';
+      if (v === 'page') {
+        // Start on the first page with something unanswered.
+        const i = pages.findIndex(pg => pg.items.some(x => !answers[x.key]));
+        page = i < 0 ? pages.length : i;
+        renderPage();
+      } else {
+        renderAllFoot();
+        // Pick up where you left off.
+        const next = $$('li[data-key]', vAll).find(li => !answers[li.dataset.key]);
+        body.scrollTop = 0;
+        // Only jump when that row would start below the first screen.
+        if (next && unanswered() < steps.length && next.offsetTop - body.offsetTop > body.clientHeight * .6) body.scrollTop = next.offsetTop - body.offsetTop - 24;
+      }
+    }
+
+    function open(from) {
+      opener = from ?? document.activeElement;
+      drawer.hidden = false;
+      document.documentElement.classList.add('drawer-open');
+      requestAnimationFrame(() => drawer.classList.add('in'));
+      setView(view);
+      panel.focus();
+    }
+    function close() {
+      drawer.classList.remove('in');
+      document.documentElement.classList.remove('drawer-open');
+      setTimeout(() => { drawer.hidden = true; }, 240);
+      opener?.focus?.({ preventScroll: true });
+    }
+
+    document.addEventListener('click', e => {
+      const t = e.target.closest('[data-open-check]');
+      if (!t) return;
+      e.preventDefault();
+      open(t);
+    });
+    drawer.addEventListener('click', e => {
+      if (e.target.closest('[data-open-brief]')) return; // handled by the brief modal
+      if (e.target.closest('[data-close]')) { close(); return; }
+      const seg = e.target.closest('.seg [data-view]'); if (seg) return setView(seg.dataset.view);
+      const ab = e.target.closest('.ans button');
+      if (ab) { const key = ab.closest('li').dataset.key; return setAnswer(key, answers[key] === ab.dataset.v ? '' : ab.dataset.v); }
+      const pb = e.target.closest('[data-page]');
+      if (pb && !pb.disabled) { page = Math.max(0, Math.min(pages.length, +pb.dataset.page)); renderPage(); }
+    });
+    drawer.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { if (!$('.brief-root:not([hidden])')) { e.preventDefault(); close(); } return; }
+      if (e.key === 'Tab') trapFocus(e, panel);
+    });
+
     paint();
+  }
+
+  // Keep keyboard focus inside an open dialog.
+  function trapFocus(e, box) {
+    const f = $$('button:not([disabled]), a[href], [tabindex="0"]', box).filter(x => x.offsetParent);
+    if (!f.length) return;
+    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+    else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+  }
+
+  /* ---------- For My Doctor: a large modal with the printable brief ---------- */
+  function wireBrief() {
+    const root = document.createElement('div');
+    root.className = 'brief-root';
+    root.hidden = true;
+    root.innerHTML = `
+      <div class="brief-backdrop" data-bclose></div>
+      <div class="brief-modal" role="dialog" aria-modal="true" aria-labelledby="briefTitle" tabindex="-1">
+        <header class="brief-modal-head">
+          <div class="brief-modal-title">
+            <h2 id="briefTitle">For My Doctor</h2>
+            <p>This is what your doctor will see. Print it, or save it as a PDF to email.</p>
+          </div>
+          <div class="brief-modal-tools">
+            <div class="seg" role="tablist" aria-label="Which requirements to show">
+              <button type="button" role="tab" data-bview="all" aria-selected="true">All Requirements</button>
+              <button type="button" role="tab" data-bview="answered" aria-selected="false">Only My Answers</button>
+            </div>
+            <button type="button" class="btn btn-sm" id="briefPrint">${I.print}Print or Save PDF</button>
+          </div>
+          <button type="button" class="drawer-close brief-close" data-bclose aria-label="Close">${I.x}</button>
+        </header>
+        <div class="brief-modal-body" id="briefBody"></div>
+      </div>`;
+    document.body.appendChild(root);
+    const box = $('.brief-modal', root), bodyEl = $('#briefBody', root);
+    let opener = null, wasLocked = false;
+
+    async function open(from) {
+      if (!studyData) return;
+      opener = from;
+      bodyEl.innerHTML = buildBrief(studyData, { answers, profile, search: loadSearch(), version: await dataVersion() });
+      root.hidden = false;
+      wasLocked = document.documentElement.classList.contains('drawer-open');
+      document.documentElement.classList.add('drawer-open');
+      requestAnimationFrame(() => root.classList.add('in'));
+      bodyEl.scrollTop = 0;
+      box.focus();
+    }
+    function close() {
+      root.classList.remove('in');
+      if (!wasLocked) document.documentElement.classList.remove('drawer-open');
+      setTimeout(() => { root.hidden = true; }, 200);
+      opener?.focus?.({ preventScroll: true });
+    }
+
+    document.addEventListener('click', e => {
+      const t = e.target.closest('[data-open-brief]');
+      if (!t) return;
+      e.preventDefault();
+      open(t);
+    });
+    root.addEventListener('click', e => {
+      if (e.target.closest('[data-bclose]')) return close();
+      const v = e.target.closest('[data-bview]');
+      if (v) {
+        $$('[data-bview]', root).forEach(b => b.setAttribute('aria-selected', String(b === v)));
+        bodyEl.classList.toggle('answered-only', v.dataset.bview === 'answered');
+      }
+      if (e.target.closest('#briefPrint')) {
+        // Print only the sheet. A locked scroll (overflow: hidden) would cut the printout to one page.
+        const html = document.documentElement, locked = html.classList.contains('drawer-open');
+        html.classList.add('print-brief'); html.classList.remove('drawer-open');
+        addEventListener('afterprint', () => { html.classList.remove('print-brief'); if (locked) html.classList.add('drawer-open'); }, { once: true });
+        print();
+      }
+    });
+    root.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === 'Tab') trapFocus(e, box);
+    });
   }
 
   /* ---------- Reach out: email draft and call script ---------- */
@@ -727,7 +1017,12 @@
     const links = $$('.toc a');
     links[0]?.classList.add('on');
     const io = new IntersectionObserver(entries => {
-      for (const e of entries) if (e.isIntersecting) links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === `#${e.target.id}`));
+      for (const e of entries) if (e.isIntersecting) links.forEach(a => {
+        const on = a.getAttribute('href') === `#${e.target.id}`;
+        a.classList.toggle('on', on);
+        // On phones the TOC is a horizontal bar; keep the current section's link in view.
+        if (on) { const bar = a.closest('.toc'); if (bar.scrollWidth > bar.clientWidth) bar.scrollTo({ left: a.offsetLeft - 16, behavior: 'smooth' }); }
+      });
     }, { rootMargin: '-30% 0px -60% 0px' });
     $$('.sec').forEach(s => io.observe(s));
   }

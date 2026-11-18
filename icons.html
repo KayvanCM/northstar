@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northstar · App Icon Exploration</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  body { background: var(--light); color: var(--forest); font-family: var(--sans); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 64px 40px 120px; }
+  .head h1 { font-family: var(--display); font-weight: 300; font-size: 56px; line-height: 1.04; letter-spacing: -.01em; margin: 0 0 16px; }
+  .head p { max-width: 640px; margin: 0; font-size: 18px; line-height: 1.5; color: var(--forest-70); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 56px; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px)  { .grid { grid-template-columns: 1fr; } .wrap { padding: 40px 20px 80px; } }
+
+  .card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .card.current { background: var(--cream); }
+  .stage { display: flex; align-items: flex-end; gap: 20px; }
+  .tile { display: block; filter: drop-shadow(0 1px 1px rgba(23,63,67,.08)) drop-shadow(0 8px 20px rgba(23,63,67,.10)); }
+  .tile.xl { width: 152px; height: 152px; }
+  .sizes { display: flex; align-items: flex-end; gap: 12px; padding-bottom: 4px; }
+  .sizes svg { display: block; }
+  .sizes .s64 { width: 64px; height: 64px; }
+  .sizes .s32 { width: 32px; height: 32px; }
+  .sizes .s16 { width: 16px; height: 16px; }
+
+  .lockups { display: flex; gap: 8px; }
+  .lockup { flex: 1; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: var(--r-sm); font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+  .lockup svg { width: 24px; height: 24px; flex: none; }
+  .lockup.on-light { background: var(--cream); color: var(--forest); }
+  .lockup.on-dark  { background: var(--forest); color: var(--light); }
+
+  .meta { display: flex; flex-direction: column; gap: 8px; }
+  .meta .row { display: flex; align-items: baseline; gap: 12px; }
+  .meta .num { font-family: var(--mono); font-size: 12px; color: var(--forest-50); }
+  .meta h2 { font-family: var(--display); font-weight: 400; font-size: 28px; margin: 0; }
+  .meta p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--forest-70); }
+  .meta .note { font-size: 13px; color: var(--forest-50); }
+  .badge { margin-left: auto; font-size: 12px; font-weight: 500; padding: 4px 8px; border-radius: 999px; background: var(--cream-2); color: var(--forest); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <h1>Eight Directions for the App Icon</h1>
+    <p>Each one is shown as a large tile, at 64, 32, and 16 px (favicon size), and as the small mark next to the wordmark on light and dark. The current compass needle comes first for comparison. No rings and no four-point sparkles.</p>
+  </header>
+  <section class="grid" id="grid"></section>
+</main>
+
+<script>
+const C = {
+  spruce: '#173F43', deep: '#102F33', glass: '#D3E8E5', sage: '#AFD5CF', mist: '#E6F2EF',
+  cream: '#F6F4EF', light: '#FDFCF9', clay: '#F4E8E1', terra: '#7A3E26', mauve: '#B78A72', slate: '#BCCDDC'
+};
+
+// Each mark draws in a 100×100 box. `t` is true for the app tile, false for the bare mark beside the wordmark.
+// The bare mark uses currentColor so it follows the lockup's text color.
+const V = [
+  {
+    name: 'Compass Needle', current: true,
+    why: 'Today’s mark. Solid north half, lighter south half, hollow pivot.',
+    bg: C.spruce,
+    mark: t => {
+      const f = t ? C.sage : 'currentColor';
+      return `<g transform="translate(50 50) scale(3) translate(-12 -12)">
+        <path d="M12 2.5 15.4 12H8.6zM13.7 12a1.7 1.7 0 0 0-3.4 0z" fill="${f}" fill-rule="evenodd"/>
+        <path d="M8.6 12h6.8L12 21.5zM10.3 12a1.7 1.7 0 0 0 3.4 0z" fill="${f}" fill-rule="evenodd" opacity=".45"/></g>`;
+    }
+  },
+  {
+    name: 'Needle N',
+    why: 'The letter N, with the diagonal drawn as the compass needle. Keeps today’s idea and adds the name.',
+    bg: C.spruce,
+    mark: t => {
+      const f = t ? C.cream : 'currentColor', n = t ? C.sage : 'currentColor';
+      return `<rect x="24" y="24" width="11" height="52" rx="2" fill="${f}"/>
+        <rect x="65" y="24" width="11" height="52" rx="2" fill="${f}"/>
+        <path d="M35 24 56 46.5 44 53.5z" fill="${n}"/>
+        <path d="M56 46.5 65 76 44 53.5z" fill="${n}" opacity=".45"/>`;
+    }
+  },
+  {
+    name: 'Horizon Star',
+    why: 'One light above the hills. Something to walk toward, which fits “Tomorrow’s care is being tested today.”',
+    bg: C.spruce,
+    mark: t => t
+      ? `<path d="M0 74 Q32 52 64 66 T100 60 V100 H0z" fill="${C.forest2 || '#20535A'}"/>
+         <path d="M0 82 Q50 58 100 80 V100 H0z" fill="${C.sage}"/>
+         <circle cx="64" cy="32" r="8" fill="${C.cream}"/>`
+      : `<path d="M4 90 Q50 60 96 90z" fill="currentColor"/>
+         <circle cx="68" cy="30" r="11" fill="currentColor"/>`
+  },
+  {
+    name: 'Serif N',
+    why: 'A Timeless Serif N with a small star at its peak. Quiet and editorial, like the headlines.',
+    bg: C.cream,
+    mark: t => {
+      const f = t ? C.spruce : 'currentColor', s = t ? C.terra : 'currentColor';
+      return `<text x="48" y="79" text-anchor="middle" font-family="Timeless Serif" font-weight="300" font-size="78" fill="${f}">N</text>
+        <circle cx="76" cy="18" r="${t ? 6 : 8}" fill="${s}"/>`;
+    },
+    note: 'Would need to be converted to outlines before shipping.'
+  },
+  {
+    name: 'The Path',
+    why: 'Dotted steps winding up to one point. The whole journey, from search to first call.',
+    bg: C.cream,
+    mark: t => {
+      const f = t ? C.spruce : 'currentColor', a = t ? C.terra : 'currentColor';
+      return `<path d="M30 84 C30 66 70 68 68 52 S38 38 46 26" fill="none" stroke="${f}" stroke-width="${t ? 7 : 10}" stroke-linecap="round" stroke-dasharray="0 ${t ? 11.5 : 15}"/>
+        <circle cx="52" cy="18" r="${t ? 9 : 12}" fill="${a}"/>`;
+    }
+  },
+  {
+    name: 'Pin North',
+    why: 'A map pin with the north needle cut out of its head. Finding a study near you, made literal.',
+    bg: C.glass,
+    mark: t => {
+      const f = t ? C.spruce : 'currentColor';
+      return `<path fill="${f}" fill-rule="evenodd" d="M50 88C40 74 24 60 24 42a26 26 0 0 1 52 0c0 18-16 32-26 46z M50 24 58 46H42z"/>`;
+    }
+  },
+  {
+    name: 'Rising',
+    why: 'Three chevrons pointing north, brightening as they climb. Progress, one step at a time.',
+    bg: C.spruce,
+    mark: t => {
+      const cols = t ? [C.cream, C.sage, C.sage] : ['currentColor', 'currentColor', 'currentColor'];
+      const op = [1, .6, .3], sw = t ? 9 : 12;
+      return [24, 46, 68].map((y, i) => `<path d="M26 ${y + 16} 50 ${y} 74 ${y + 16}" fill="none" stroke="${cols[i]}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" opacity="${op[i]}"/>`).join('');
+    }
+  },
+  {
+    name: 'Constellation',
+    why: 'Four stars joined into a path: you, your doctor, the site, the study. The brightest one sits at the top.',
+    bg: C.deep,
+    mark: t => {
+      const l = t ? C.sage : 'currentColor', s = t ? C.glass : 'currentColor', b = t ? C.cream : 'currentColor';
+      const sw = t ? 2.5 : 5, r = t ? 4.5 : 8;
+      return `<path d="M24 76 42 56 62 64 72 26" fill="none" stroke="${l}" stroke-width="${sw}" stroke-linejoin="round" opacity="${t ? .7 : 1}"/>
+        <circle cx="24" cy="76" r="${r}" fill="${s}"/><circle cx="42" cy="56" r="${r}" fill="${s}"/><circle cx="62" cy="64" r="${r}" fill="${s}"/>
+        <circle cx="72" cy="26" r="${t ? 9 : 13}" fill="${b}"/>`;
+    },
+    note: 'Thin lines drop out at 16 px.'
+  },
+  {
+    name: 'Open Door',
+    why: 'A lit doorway with light spilling out. Warm, and it matches “Ask anything. Walk away anytime.”',
+    bg: C.spruce,
+    mark: t => t
+      ? `<path d="M30 80 22 100H78L70 80z" fill="${C.cream}" opacity=".18"/>
+         <path d="M34 80V44a16 16 0 0 1 32 0v36z" fill="${C.cream}"/>
+         <circle cx="58" cy="62" r="2.5" fill="${C.spruce}"/>`
+      : `<path d="M28 90V40a22 22 0 0 1 44 0v50z" fill="currentColor"/>`
+  },
+];
+
+const tile = (v, cls) =>
+  `<svg class="${cls}" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22.4" fill="${v.bg}"/>
+   <g>${v.mark(true)}</g></svg>`;
+const bare = v => `<svg viewBox="8 8 84 84" aria-hidden="true">${v.mark(false)}</svg>`;
+
+document.getElementById('grid').innerHTML = V.map((v, i) => `
+  <article class="card${v.current ? ' current' : ''}">
+    <div class="stage">
+      ${tile(v, 'tile xl')}
+      <div class="sizes">${tile(v, 's64')}${tile(v, 's32')}${tile(v, 's16')}</div>
+    </div>
+    <div class="lockups">
+      <div class="lockup on-light">${bare(v)}Northstar</div>
+      <div class="lockup on-dark">${bare(v)}Northstar</div>
+    </div>
+    <div class="meta">
+      <div class="row"><span class="num">${String(i).padStart(2, '0')}</span><h2>${v.name}</h2>${v.current ? '<span class="badge">Current</span>' : ''}</div>
+      <p>${v.why}</p>
+      ${v.note ? `<p class="note">${v.note}</p>` : ''}
+    </div>
+  </article>`).join('');
+</script>
+</body>
+</html>

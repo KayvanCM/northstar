@@ -85,6 +85,36 @@ function condQuery(q, loose = false) {
   return !loose && isPhrase(t) ? `"${t}"` : t;
 }
 
+/* ---------- Focused vs. broad studies ----------
+   Many cancer trials are "basket" trials: one treatment tested across a dozen cancer types. They match
+   a search like "ovarian cancer" but aren't about it, and their eligibility (sex, age) is set for the
+   whole basket. A study counts as broad when its title doesn't name the condition and either none of
+   its conditions do, its title says "solid tumors" or similar, or most of a long condition list is other
+   diseases. Checked against 535 recruiting US studies for ovarian, cervical and breast cancer. */
+const CANCER_WORDS = /\b(cancers?|carcinomas?|neoplasms?|tumou?rs?|malignanc(?:y|ies)|adenocarcinomas?|ca)\b/g;
+const COND_STOP = new Set(['of', 'the', 'and', 'or', 'with', 'in', 'a', 'an', 'stage', 'advanced', 'recurrent', 'metastatic']);
+const BASKET_TITLE = /solid tumou?rs?|malignancies|advanced cancers|multiple (cancer|tumou?r) types|selected tumou?rs|various cancers/i;
+// Rough stems, so "ovarian" meets "ovary" and "cervical" meets "cervix".
+const condTokens = s => (s ?? '').toLowerCase().replace(CANCER_WORDS, 'cancer').replace(/[^a-z0-9 ]+/g, ' ')
+  .split(/\s+/).filter(w => w && !COND_STOP.has(w)).map(w => (w.length >= 5 ? w.slice(0, 4) : w));
+function namesCondition(term, text) {
+  const want = condTokens(term), have = new Set(condTokens(text));
+  return want.length > 0 && want.every(w => have.has(w));
+}
+function studyFocus(term, title, conditions = []) {
+  const n = conditions.length;
+  const basketTitle = BASKET_TITLE.test(title ?? '');
+  // Tag text for wide studies, with or without a search term.
+  const label = n >= 4 ? `Covers ${n} conditions` : basketTitle ? 'Many cancer types' : '';
+  if (!term?.trim()) return { broad: !!label, label };
+  if (namesCondition(term, title)) return { broad: false, label: '' };
+  const hits = conditions.filter(c => namesCondition(term, c)).length;
+  const broad = !hits || basketTitle || (n >= 4 && hits / n < 0.5);
+  return { broad, label: broad ? label : '' };
+}
+// "Ovarian Cancer" reads as "ovarian cancer" mid-sentence; acronyms like COVID stay as typed.
+const midSentence = s => (s ?? '').replace(/\b([A-Z])([a-z]+)\b/g, (_, a, b) => a.toLowerCase() + b);
+
 async function suggestConditions(q) {
   if (!q || q.length < 2) return [];
   try {
@@ -225,6 +255,162 @@ function initTooltips() {
   document.addEventListener('focusout',  e => { if (e.target.closest('.term')) hide(); });
   document.addEventListener('click',     e => { const t = e.target.closest('.term'); if (t) { current === t ? hide() : show(t); } });
   addEventListener('scroll', hide, { passive: true });
+}
+
+/* ---------- Doctor brief ----------
+   A clinician-facing sheet in registry wording, with the patient's checklist answers. Shown in the
+   For My Doctor modal on the study page and on doctor.html; prints on US Letter. */
+function buildBrief(d, { answers = {}, profile = {}, search = loadSearch(), version = null } = {}) {
+  const me = search.lat !== '' && search.lat != null ? { lat: +search.lat, lon: +search.lon } : null;
+  // Clinician-facing wording: keep the registry's terms instead of the plain-language versions.
+  const ANSWER = {
+    i: { y: 'Meets', n: 'Does not meet', u: 'Unsure' },
+    o: { y: 'Applies', n: 'Does not apply', u: 'Unsure' },
+  };
+  const TONE = { fit: 'go', block: 'stop', unsure: 'soon' };
+  const ARM_TYPE = {
+    EXPERIMENTAL: 'Experimental', ACTIVE_COMPARATOR: 'Active comparator', PLACEBO_COMPARATOR: 'Placebo comparator',
+    SHAM_COMPARATOR: 'Sham comparator', NO_INTERVENTION: 'No intervention', OTHER: 'Other',
+  };
+  const words = s => s ? s.toLowerCase().replace(/_/g, ' ') : '';
+  const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+  const blank = v => v ? esc(v) : '<span class="blank" aria-label="Not provided"></span>';
+  const fact = (k, v) => v ? `<div><dt>${k}</dt><dd>${v}</dd></div>` : '';
+  const p = d.protocolSection;
+  const idm = p.identificationModule, st = p.statusModule ?? {}, des = p.designModule ?? {};
+  const info = des.designInfo ?? {}, elig = p.eligibilityModule ?? {}, cl = p.contactsLocationsModule ?? {};
+  const arms = p.armsInterventionsModule?.armGroups ?? [];
+  const outcomes = p.outcomesModule?.primaryOutcomes ?? [];
+  const crit = parseCriteria(elig.eligibilityCriteria);
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  // Design, in registry terms
+  const masking = info.maskingInfo?.masking;
+  const who = (info.maskingInfo?.whoMasked ?? []).map(words);
+  const design = [
+    info.allocation && info.allocation !== 'NA' ? words(info.allocation).replace('non randomized', 'non-randomized') : '',
+    info.interventionModel ? `${words(info.interventionModel)} assignment` : '',
+    masking ? (masking === 'NONE' ? 'open label' : `${words(masking)}-blind${who.length ? ` (${who.join(', ')})` : ''}`) : '',
+    info.primaryPurpose ? `${words(info.primaryPurpose)} purpose` : '',
+  ].filter(Boolean).join(', ');
+  const phases = (des.phases ?? []).map(x => PHASE[x]?.short).filter(Boolean).join(', ');
+
+  // Every answerable requirement, with the patient's answer
+  const rows = crit ? [['i', crit.in], ['o', crit.out]].map(([side, items]) => ({
+    side,
+    items: items.map((c, n) => ({ ...c, side, key: side + n, a: c.head ? '' : answers[side + n] ?? '' })),
+  })) : [];
+  const answerable = rows.flatMap(r => r.items.filter(c => !c.head));
+  const answered = answerable.filter(c => c.a);
+  const flagged = answered.filter(c => ['block', 'unsure'].includes(rowState(c.key, c.a)));
+
+  // Sites: nearest open site to the patient, plus the study-wide contact
+  const sites = (cl.locations ?? []).filter(s => s.status === 'RECRUITING')
+    .map(s => ({ ...s, mi: me && s.geoPoint ? milesBetween(me, s.geoPoint) : null }))
+    .sort((a, b) => (a.mi ?? Infinity) - (b.mi ?? Infinity));
+  const nearest = me ? sites[0] : null;
+  const central = (cl.centralContacts ?? [])[0];
+  const contactLine = c => c ? [c.name, c.phone && `${c.phone}${c.phoneExt ? ` ext. ${c.phoneExt}` : ''}`, c.email].filter(Boolean).map(esc).join('<br>') : '';
+
+  const answerTag = c => {
+    if (c.head) return '';
+    if (!c.a) return '<span class="ans-none">Not answered</span>';
+    return `<span class="tag tag-${TONE[rowState(c.key, c.a)]}">${ANSWER[c.side][c.a]}</span>`;
+  };
+
+  return `
+    <article class="sheet">
+      <header class="sh-head">
+        <div class="sh-brand">
+          <span class="brand-mark">${I.mark}</span>
+          <div><b>Clinical Study Brief</b><span>Prepared by the patient with Northstar on ${esc(today)}</span></div>
+        </div>
+        <dl class="sh-patient">
+          <div><dt>Patient</dt><dd>${blank(profile.name)}</dd></div>
+          <div><dt>Age</dt><dd>${blank(profile.age)}</dd></div>
+          <div><dt>Lives in</dt><dd>${blank(profile.city || search.loc)}</dd></div>
+        </dl>
+      </header>
+
+      <section class="sh-study">
+        <div class="sh-ids">
+          <span class="mono">${esc(idm.nctId)}</span>
+          ${statusTag(st.overallStatus)}
+          ${phases ? `<span class="tag">${esc(phases)}</span>` : ''}
+        </div>
+        <h1 class="display">${esc(idm.briefTitle)}</h1>
+        ${idm.officialTitle && idm.officialTitle !== idm.briefTitle ? `<p class="sh-official">${esc(idm.officialTitle)}</p>` : ''}
+        <dl class="sh-facts">
+          ${fact('Sponsor', esc(p.sponsorCollaboratorsModule?.leadSponsor?.name))}
+          ${fact('Conditions', esc((p.conditionsModule?.conditions ?? []).join(', ')))}
+          ${fact('Study type', esc(cap(words(des.studyType))))}
+          ${fact('Design', esc(cap(design)))}
+          ${fact('Enrollment', des.enrollmentInfo?.count ? `${fmtNum(des.enrollmentInfo.count)} ${des.enrollmentInfo.type === 'ESTIMATED' ? '(planned)' : '(actual)'}` : '')}
+          ${fact('Eligible', esc([ageRange(elig.minimumAge, elig.maximumAge), (SEX[elig.sex] ?? 'All sexes').toLowerCase(), elig.healthyVolunteers ? 'healthy volunteers accepted' : 'no healthy volunteers'].join(', ')))}
+          ${fact('Start', esc(fmtDate(st.startDateStruct?.date, true)))}
+          ${fact('Primary completion', esc(fmtDate(st.primaryCompletionDateStruct?.date, true) + (st.primaryCompletionDateStruct?.type === 'ESTIMATED' ? ' (est.)' : '')))}
+        </dl>
+      </section>
+
+      <section class="sh-flag ${flagged.length ? '' : 'is-empty'}">
+        <h2>For Discussion</h2>
+        ${!answered.length ? '<p>The patient hasn’t gone through the eligibility checklist yet. The full list of requirements is below.</p>'
+          : flagged.length ? `<p>The patient marked these as unsure or possibly disqualifying:</p>
+            <ul>${flagged.map(c => `<li>${answerTag(c)}<span><small>${c.side === 'i' ? 'Inclusion' : 'Exclusion'}</small>${esc(c.text)}</span></li>`).join('')}</ul>`
+          : `<p>Nothing flagged. The patient’s ${plural(answered.length, 'answer')} all point toward eligibility.</p>`}
+      </section>
+
+      ${arms.length ? `
+        <section class="sh-sec">
+          <h2>Arms and Interventions</h2>
+          <table class="sh-table">
+            <thead><tr><th>Arm</th><th>Type</th><th>Intervention</th></tr></thead>
+            <tbody>${arms.map(a => `<tr><td>${esc(a.label)}</td><td>${esc(ARM_TYPE[a.type] ?? '')}</td><td>${esc((a.interventionNames ?? []).join('; '))}</td></tr>`).join('')}</tbody>
+          </table>
+        </section>` : ''}
+
+      ${outcomes.length ? `
+        <section class="sh-sec">
+          <h2>Primary ${outcomes.length === 1 ? 'Outcome' : 'Outcomes'}</h2>
+          <ul class="sh-outcomes">${outcomes.slice(0, 3).map(o => `<li><span>${esc(unescapeMd(o.measure))}</span>${o.timeFrame ? `<small>${esc(o.timeFrame)}</small>` : ''}</li>`).join('')}</ul>
+        </section>` : ''}
+
+      <section class="sh-sec">
+        <h2>Eligibility, With the Patient’s Answers</h2>
+        <p class="sh-note">${crit ? `Answered ${fmtNum(answered.length)} of ${fmtNum(answerable.length)}. These are self-reported and are not a screening determination. The study team confirms eligibility at screening.` : 'The criteria couldn’t be split into a list, so they appear as written.'}</p>
+        ${crit ? rows.map(r => `
+          <h3>${r.side === 'i' ? 'Inclusion criteria' : 'Exclusion criteria'}</h3>
+          <table class="sh-table sh-crit">
+            <tbody>${r.items.map(c => `<tr class="${c.head ? 'head' : ''} ${c.sub ? 'sub' : ''} ${c.a ? 'has-a' : 'no-a'}"><td>${esc(c.text)}</td><td>${answerTag(c)}</td></tr>`).join('')}</tbody>
+          </table>`).join('')
+          : `<div class="sh-raw">${esc(unescapeMd(elig.eligibilityCriteria ?? 'No eligibility criteria were provided.'))}</div>`}
+      </section>
+
+      <section class="sh-bottom">
+        <div>
+          <h2>Contacts</h2>
+          ${nearest ? `<div class="sh-contact"><small>Nearest open site${nearest.mi != null ? `, ${esc(fmtMiles(nearest.mi))}` : ''}</small><b>${esc(nearest.facility ?? 'Study site')}</b>${esc([nearest.city, STATE_ABBR[nearest.state] ?? nearest.state].filter(Boolean).join(', '))}${(nearest.contacts ?? [])[0] ? `<br>${contactLine(nearest.contacts[0])}` : ''}</div>` : ''}
+          ${central ? `<div class="sh-contact"><small>Central contact</small>${contactLine(central)}</div>` : ''}
+          ${!nearest && !central ? '<p class="sh-note">No contact is listed on the record.</p>' : ''}
+        </div>
+        <div>
+          <h2>Full Record</h2>
+          <div class="sh-lookup">
+            <span>clinicaltrials.gov/study/</span>
+            <span class="mono">${esc(idm.nctId)}</span>
+            <small>Last updated on the registry ${esc(fmtDate(st.lastUpdatePostDateStruct?.date, true))}</small>
+          </div>
+        </div>
+        <div class="sh-notes">
+          <h2>Clinician Notes</h2>
+          <div class="lines"><i></i><i></i><i></i><i></i></div>
+        </div>
+      </section>
+
+      <footer class="sh-foot">
+        Prepared with Northstar, an independent design concept not affiliated with the National Library of Medicine, NIH, or the study sponsor. Study details come from ClinicalTrials.gov${version?.dataTimestamp ? `, data as of ${esc(new Date(version.dataTimestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. Answers are the patient’s own and have not been reviewed.
+      </footer>
+    </article>`;
 }
 
 /* ---------- Location ---------- */
@@ -421,7 +607,8 @@ function parseCriteria(text) {
     if (hdrIn && (hdrIn[2] || bare.endsWith(':'))) { cur = 'in'; if (hdrIn[3]) groups.in.push({ text: hdrIn[3] }); continue; }
     if (hdrOut && (hdrOut[2] || bare.endsWith(':'))) { cur = 'out'; if (hdrOut[3]) groups.out.push({ text: hdrOut[3] }); continue; }
     const m = raw.match(/^(\s*)(?:[*\-•·]|\d{1,2}[.)]|[a-z][.)]|[ivx]{1,4}[.)])\s+(.+)$/i);
-    if (m) groups[cur].push({ text: m[2].trim(), sub: m[1].replace(/\t/g, '    ').length >= 2 });
+    // A bullet that ends in ":" ("Patient has any of the following:") introduces a sub-list, so it's a label, not a question.
+    if (m) groups[cur].push({ text: m[2].trim(), sub: m[1].replace(/\t/g, '    ').length >= 2, head: /:\s*$/.test(m[2]) });
     else groups[cur].push({ text: bare, head: /:$/.test(bare) });
   }
   if (!groups.in.length && !groups.out.length) return null;
@@ -489,8 +676,21 @@ function mountChrome(active) {
         <a href="index.html#phases">How Studies Work</a>
       </nav>
       <div class="header-note"><span class="live-dot"></span><span data-sync>Live from ClinicalTrials.gov</span></div>
-    </div>`;
+      <button type="button" class="menu-btn" aria-expanded="false" aria-controls="siteMenu" aria-label="Menu"><i></i><i></i></button>
+    </div>
+    <nav class="site-menu" id="siteMenu" aria-label="Main" hidden>
+      <a href="index.html" ${active === 'home' ? 'aria-current="page"' : ''}>Home</a>
+      <a href="${searchToUrl(loadSearch())}" ${active === 'find' ? 'aria-current="page"' : ''}>Find a Study</a>
+      <a href="index.html#phases">How Studies Work</a>
+    </nav>`;
   document.body.prepend(header);
+  // Phones get a menu button in place of the inline nav.
+  const menuBtn = header.querySelector('.menu-btn'), menu = header.querySelector('.site-menu');
+  const setMenu = open => { menu.hidden = !open; menuBtn.setAttribute('aria-expanded', String(open)); header.classList.toggle('menu-open', open); };
+  menuBtn.addEventListener('click', () => setMenu(menu.hidden));
+  menu.addEventListener('click', e => { if (e.target.closest('a')) setMenu(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
+  matchMedia('(min-width: 761px)').addEventListener('change', e => { if (e.matches) setMenu(false); });
 
   const footer = document.createElement('footer');
   footer.className = 'site-footer';
