@@ -227,7 +227,7 @@
   });
 
   const sortDD = dropdown($('#sort'), {
-    options: [{ value: 'best', label: 'Best Match' }, { value: 'near', label: 'Closest First' }, { value: 'new', label: 'Newest First' }],
+    options: [{ value: 'best', label: 'Best Match' }, { value: 'near', label: 'Closest Study Site' }, { value: 'new', label: 'Newest First' }],
     value: S.sort,
     onChange: v => {
       if (v === 'near' && !hasGeo()) { sortDD.value = S.sort; locEl.focus(); toast('Add your city to sort by distance.'); return; }
@@ -275,7 +275,7 @@
      by its nearest site gives a true nearest-first list. */
   const RINGS = [10, 25, 50, 100, 250, 500, 1000, 2500];
   const RING_CAP = 1000; // past this a ring is loaded partially, so its order is approximate
-  const byMi = (a, b) => (a.nearest?.mi ?? 1e9) - (b.nearest?.mi ?? 1e9);
+  const byMi = (a, b) => (a.closestMi ?? Infinity) - (b.closestMi ?? Infinity);
 
   async function startNear(base) {
     const radii = byMiles() ? [...RINGS.filter(r => r < +S.dist), +S.dist] : RINGS;
@@ -425,19 +425,21 @@
   function shape(raw) {
     const p = raw.protocolSection;
     const usOnly = S.dist === 'us';
-    const locs = (p.contactsLocationsModule?.locations ?? []).filter(l => l.geoPoint && (!usOnly || l.country === 'United States'));
     const allLocs = p.contactsLocationsModule?.locations ?? [];
-    let nearest = null;
-    if (hasGeo() && locs.length) {
-      const me = { lat: S.lat, lon: S.lon };
-      for (const l of locs) {
-        const mi = milesBetween(me, { lat: l.geoPoint.lat, lon: l.geoPoint.lon });
-        const openBonus = l.status === 'RECRUITING' ? 0 : 0.5; // prefer open sites on near-ties
-        if (!nearest || mi + openBonus < nearest.mi + nearest.bonus) nearest = { ...l, mi, bonus: openBonus };
-      }
-    } else if (locs.length) {
-      nearest = locs.find(l => l.status === 'RECRUITING') ?? locs[0];
-    }
+    const origin = hasGeo() ? { lat: S.lat, lon: S.lon } : null;
+    const local = allLocs.filter(site => !usOnly || site.country === 'United States')
+      .map(site => ({
+        ...site,
+        mi: origin && site.geoPoint ? milesBetween(origin, site.geoPoint) : null,
+      }))
+      .filter(site => !byMiles() || (site.mi != null && site.mi <= Number(S.dist)))
+      .sort((a, b) => (a.mi ?? Infinity) - (b.mi ?? Infinity));
+    const nearest = local.find(site => site.status === 'RECRUITING')
+      ?? local.find(site => S.soon && site.status === 'NOT_YET_RECRUITING')
+      ?? local[0];
+    const siteStatus = nearest?.status === 'RECRUITING' ? 'Recruiting at this site'
+      : nearest?.status === 'NOT_YET_RECRUITING' ? 'Opening soon at this site'
+      : byMiles() ? 'No nearby site confirmed recruiting' : 'No site confirmed recruiting in this search';
     return {
       id: p.identificationModule.nctId,
       title: p.identificationModule.briefTitle,
@@ -454,7 +456,7 @@
       healthy: p.eligibilityModule?.healthyVolunteers,
       kinds: [...new Set((p.armsInterventionsModule?.interventions ?? []).map(i => i.type))].filter(t => t !== 'OTHER'),
       siteCount: allLocs.length,
-      nearest,
+      nearest, siteStatus, closestMi: local[0]?.mi,
       focus: studyFocus(searchTerm(S.cond), p.identificationModule.briefTitle, p.conditionsModule?.conditions ?? []),
     };
   }
@@ -533,8 +535,8 @@
     const phase = phaseLabel(s.phases, s.type);
     const kinds = s.kinds.slice(0, s.focus.label ? 1 : 2).map(k => `<span class="tag">${esc(INTERVENTION[k] ?? k)}</span>`).join('');
     const near = s.nearest
-      ? `<span>${I.pin}<span><b>${esc(s.nearest.city ?? s.nearest.facility ?? '')}${s.nearest.state ? `, ${esc(STATE_ABBR[s.nearest.state] ?? s.nearest.state)}` : ''}</b>${s.nearest.mi != null ? ` ${fmtMiles(s.nearest.mi)}` : ''}${s.siteCount > 1 ? ` <span class="muted">+${fmtNum(s.siteCount - 1)} more ${s.siteCount - 1 === 1 ? 'site' : 'sites'}</span>` : ''}</span></span>`
-      : s.siteCount ? `<span>${I.pin}${plural(s.siteCount, 'site')}</span>` : '';
+      ? `<span>${I.pin}<span><b>${esc(s.nearest.city ?? s.nearest.facility ?? '')}${s.nearest.state ? `, ${esc(STATE_ABBR[s.nearest.state] ?? s.nearest.state)}` : ''}</b>${s.nearest.mi != null ? ` ${fmtMiles(s.nearest.mi)}` : ''} · ${esc(s.siteStatus)}${s.siteCount > 1 ? ` <span class="muted">+${fmtNum(s.siteCount - 1)} more ${s.siteCount - 1 === 1 ? 'site' : 'sites'}</span>` : ''}</span></span>`
+      : `<span>${I.pin}${esc(s.siteStatus)}</span>`;
     const who = `${ageRange(s.minAge, s.maxAge)}${s.sex && s.sex !== 'ALL' ? `, ${SEX[s.sex].toLowerCase()}` : ''}`;
     return `<li><a class="study-card${i < 0 ? ' seen' : ''}" href="study.html?id=${esc(s.id)}" data-id="${esc(s.id)}" style="--i:${Math.max(i, 0)}">
       <div class="card-top">
@@ -584,7 +586,7 @@
       const g = s.nearest?.geoPoint;
       if (!g) continue;
       const m = dotMarker(g.lat, g.lon).addTo(layer);
-      m.bindPopup(`<b>${esc(s.title)}</b>${esc(s.nearest.facility ?? '')}${s.nearest.mi != null ? `, ${fmtMiles(s.nearest.mi)}` : ''}<br><a href="study.html?id=${esc(s.id)}">View study</a>`, { maxWidth: 260 });
+      m.bindPopup(`<b>${esc(s.title)}</b>${esc(s.nearest.facility ?? '')}${s.nearest.mi != null ? `, ${fmtMiles(s.nearest.mi)}` : ''}<br>${esc(s.siteStatus)}<br><a href="study.html?id=${esc(s.id)}">View study</a>`, { maxWidth: 260 });
       m.on('mouseover', () => highlight(s.id, true));
       m.on('mouseout', () => highlight(s.id, false));
       m.on('click', () => {

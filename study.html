@@ -347,6 +347,18 @@
                 </div>
               </div>
             </div>
+            <section class="follow-up" aria-labelledby="followTitle">
+              <h3 id="followTitle">Follow-up</h3>
+              <p class="composer-hint" id="contactStatus" role="status"></p>
+              <button type="button" class="btn btn-secondary btn-sm" id="markContact">Mark as contacted</button>
+              <div id="followUp" hidden>
+                <label class="field"><span>Next step or note (optional)</span>
+                  <textarea id="contactNote" rows="3" placeholder="What did the study team say?"></textarea>
+                </label>
+                <button type="button" class="btn btn-secondary btn-sm" id="saveNote">Save note</button>
+                <button type="button" class="btn-link" id="clearContact">Clear follow-up</button>
+              </div>
+            </section>
           </section>
 
           <!-- What happens -->
@@ -494,6 +506,7 @@
       btn.innerHTML = open ? `Show Fewer Groups ${I.chev}` : `Show ${fmtNum(arms.length - 3)} More Groups ${I.chev}`;
     });
     wireReach({ idm, recips, crit });
+    wireFollowUp(idm.nctId);
     drawTimeline(st);
     if (sites.length) drawSites(sites);
     wireToc();
@@ -865,7 +878,10 @@
       { p: `I came across your study “${idm.briefTitle}” (${idm.nctId}) and I’d like to find out whether I could take part${to?.facility ? ` at ${to.facility}` : ''}.` },
     ];
     if (about) doc.push({ p: `A little about me: ${about}.` });
-    if (t.answered) doc.push({ p: unsure.length || block.length ? 'I’ve read through the eligibility requirements and have a few questions.' : 'I’ve read through the eligibility requirements, and as far as I can tell I meet them.' });
+    if (t.answered) {
+      const reviewed = t.answered < t.total ? 'some of the study requirements' : 'the study requirements';
+      doc.push({ p: `I’ve reviewed ${reviewed}. Could your team help me confirm whether I might qualify?` });
+    }
     if (unsure.length) doc.push({ p: 'I wasn’t sure about these:' }, { ul: unsure });
     if (block.length) doc.push({ p: 'These might rule me out, but I’d like to check:' }, { ul: block });
     doc.push(
@@ -892,6 +908,48 @@
   }).join('');
 
   let redrawLetter = () => {};
+  function wireFollowUp(studyId) {
+    const key = `northstar.followup.${studyId}`;
+    const mark = $('#markContact'), panel = $('#followUp'), note = $('#contactNote');
+    const status = $('#contactStatus');
+    let entry = null;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key));
+      if (stored && Number.isFinite(stored.date) && typeof stored.note === 'string') entry = stored;
+    } catch {}
+
+    function draw() {
+      mark.hidden = !!entry;
+      panel.hidden = !entry;
+      note.value = entry?.note ?? '';
+      status.textContent = entry
+        ? `Contacted on ${new Date(entry.date).toLocaleDateString(undefined, { dateStyle: 'medium' })}. Saved on this device.`
+        : 'Keep track of your conversation on this device.';
+    }
+    function save(next) {
+      try {
+        if (next) localStorage.setItem(key, JSON.stringify(next));
+        else localStorage.removeItem(key);
+      } catch {
+        status.textContent = 'Your browser could not save this change. Try again.';
+        return false;
+      }
+      entry = next;
+      draw();
+      return true;
+    }
+    mark.addEventListener('click', () => {
+      if (save({ date: Date.now(), note: '' })) note.focus();
+    });
+    $('#saveNote').addEventListener('click', () => {
+      if (entry && save({ ...entry, note: note.value.trim() })) status.textContent += ' Note updated.';
+    });
+    $('#clearContact').addEventListener('click', () => {
+      if (save(null)) mark.focus();
+    });
+    draw();
+  }
+
   function wireReach({ idm, recips, crit }) {
     // Default to the nearest site when we know where you are; otherwise the study-wide contact.
     let pick = me && recips.some(r => r.site) ? recips.findIndex(r => r.site) : 0;
