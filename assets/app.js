@@ -361,7 +361,7 @@ function initTooltips() {
 /* ---------- Doctor brief ----------
    A clinician-facing sheet in registry wording, with the patient's checklist answers. Shown in the
    For My Doctor modal on the study page and on doctor.html; prints on US Letter. */
-function buildBrief(d, { answers = {}, profile = {}, search = loadSearch(), version = null } = {}) {
+function buildBrief(d, { answers = {}, needsReview = false, profile = {}, search = loadSearch(), version = null } = {}) {
   const me = search.lat !== '' && search.lat != null ? { lat: +search.lat, lon: +search.lon } : null;
   // Clinician-facing wording: keep the registry's terms instead of the plain-language versions.
   const ANSWER = {
@@ -455,10 +455,11 @@ function buildBrief(d, { answers = {}, profile = {}, search = loadSearch(), vers
 
       <section class="sh-flag ${flagged.length ? '' : 'is-empty'}">
         <h2>For Discussion</h2>
-        ${!answered.length ? '<p>The patient hasn’t gone through the eligibility checklist yet. The full list of requirements is below.</p>'
+        ${needsReview ? `<p>${esc(checklistReviewMessage)}</p>` : ''}
+        ${!answered.length ? '<p>No answers are included. The full list of requirements is below.</p>'
           : flagged.length ? `<p>The patient marked these as unsure or possibly disqualifying:</p>
             <ul>${flagged.map(c => `<li>${answerTag(c)}<span><small>${c.side === 'i' ? 'Inclusion' : 'Exclusion'}</small>${esc(c.text)}</span></li>`).join('')}</ul>`
-          : `<p>Nothing flagged. The patient’s ${plural(answered.length, 'answer')} all point toward eligibility.</p>`}
+          : `<p>No concerns were flagged in the ${plural(answered.length, 'answered item')}. ${answerable.length - answered.length} unanswered. The study team confirms eligibility.</p>`}
       </section>
 
       ${arms.length ? `
@@ -695,7 +696,7 @@ function autosize(input) {
 }
 
 /* ---------- Eligibility text -> structured lists ---------- */
-// Shared by the study page and the doctor summary. Item keys are i0, i1… (inclusion) and o0, o1… (exclusion).
+// Shared by the study page and the doctor summary.
 function parseCriteria(text) {
   if (!text) return null;
   const groups = { in: [], out: [], pre: [] };
@@ -717,6 +718,90 @@ function parseCriteria(text) {
   return groups;
 }
 
+
+
+/* ---------- Checklist persistence ---------- */
+// The i0/o0 keys are only for the currently rendered DOM. Never store an answer under one alone.
+function checklistItems(crit) {
+  const rows = [];
+  if (!crit) return rows;
+  for (const [side, items] of [['i', crit.in], ['o', crit.out]]) {
+    let heads = [], lastWasHead = false, mode = '';
+    items.forEach((c, index) => {
+      if (c.head) {
+        if (!lastWasHead) heads = [];
+        heads.push(c.text);
+        lastWasHead = true;
+        mode = '';
+        return;
+      }
+      if (lastWasHead) mode = c.sub ? 'sub' : 'run';
+      else if (mode === 'sub' && !c.sub) heads = [];
+      lastWasHead = false;
+      const identity = JSON.stringify([side, heads, Boolean(c.sub), c.text]);
+      rows.push({ key: side + index, side, text: c.text, sub: c.sub, ctx: heads.map(h => h.replace(/:\s*$/, '')).join(', '), identity });
+    });
+  }
+  return rows;
+}
+function checklistSnapshot(crit, revision) {
+  const rows = checklistItems(crit), counts = new Map();
+  for (const row of rows) counts.set(row.identity, (counts.get(row.identity) ?? 0) + 1);
+  const snapshot = crit ? JSON.stringify([revision ?? null, crit.in, crit.out]) : '';
+  for (const row of rows) {
+    // Indistinguishable rows can only be restored for the same registry revision and exact list.
+    row.storageKey = counts.get(row.identity) === 1 ? row.identity : JSON.stringify(['duplicate', row.identity, row.key]);
+    row.duplicate = counts.get(row.identity) > 1;
+  }
+  return { rows, snapshot };
+}
+const isChecklistAnswer = a => a === 'y' || a === 'n' || a === 'u';
+const hasChecklistAnswer = obj => obj && typeof obj === 'object' && Object.values(obj).some(isChecklistAnswer);
+function checklistAnswersFor(id, crit, revision) {
+  const { rows, snapshot } = checklistSnapshot(crit, revision);
+  const key = `northstar:check:v2:${id}`;
+  const read = k => {
+    try { return JSON.parse(localStorage.getItem(k)); } catch { return null; }
+  };
+  const saved = read(key);
+  const savedAnswers = saved?.answers ?? {};
+  const duplicateAnswers = saved?.duplicates ?? {};
+  const answers = Object.create(null), matched = new Set(), matchedDuplicates = new Set();
+  for (const row of rows) {
+    const value = row.duplicate
+      ? (saved?.snapshot === snapshot ? duplicateAnswers[row.storageKey] : undefined)
+      : savedAnswers[row.storageKey];
+    if (!isChecklistAnswer(value)) continue;
+    answers[row.key] = value;
+    (row.duplicate ? matchedDuplicates : matched).add(row.storageKey);
+  }
+  const hasUnmatched = (values, keys) => Object.entries(values).some(([k, v]) => isChecklistAnswer(v) && !keys.has(k));
+  // Preserve legacy storage, but never guess which question its positional keys referred to.
+  const legacyAsk = !saved && read(`northstar:ask:${id}`);
+  const legacy = !saved && (hasChecklistAnswer(read(`northstar:check:${id}`)) || (Array.isArray(legacyAsk) && legacyAsk.length > 0));
+  let needsReview = Boolean(legacy || saved?.needsReview || hasUnmatched(savedAnswers, matched) || hasUnmatched(duplicateAnswers, matchedDuplicates));
+  if (rows.length && rows.every(row => answers[row.key])) needsReview = false;
+  const rowsByKey = new Map(rows.map(row => [row.key, row]));
+  return {
+    answers,
+    get needsReview() { return needsReview; },
+    setAnswer(rowKey, value) {
+      const row = rowsByKey.get(rowKey);
+      if (!row || (value !== '' && !isChecklistAnswer(value))) return;
+      if (value) answers[rowKey] = value; else delete answers[rowKey];
+      if (rows.length && rows.every(item => answers[item.key])) needsReview = false;
+      // Merge a single change so another open tab's unrelated answers aren't lost. Only
+      // carry duplicate entries forward if they're from this exact record and list.
+      const latest = read(key);
+      const stored = { ...(latest?.answers ?? {}) };
+      const duplicates = latest?.snapshot === snapshot ? { ...(latest.duplicates ?? {}) } : {};
+      const bucket = row.duplicate ? duplicates : stored;
+      if (value) bucket[row.storageKey] = value; else delete bucket[row.storageKey];
+      try { localStorage.setItem(key, JSON.stringify({ answers: stored, duplicates, snapshot, needsReview })); } catch {}
+    },
+  };
+}
+const checklistReviewMessage = 'Some saved answers could not be matched to the current questions. Review the checklist before using this brief.';
 
 // Yes on an inclusion item, or No on an exclusion item, counts in your favor.
 const rowState = (key, a) => !a ? '' : a === 'u' ? 'unsure' : (key[0] === 'i') === (a === 'y') ? 'fit' : 'block';

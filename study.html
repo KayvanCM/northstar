@@ -20,17 +20,15 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="assets/app.js"></script>
+<script src="assets/app.js?v=checklist-2"></script>
 <script>
   mountChrome('find');
   $('[data-mark]').innerHTML = I.mark;
 
   const id = (new URLSearchParams(location.search).get('id') ?? '').toUpperCase().trim();
   const me = (() => { const s = loadSearch(); return s.lat !== '' && s.lat != null ? { lat: +s.lat, lon: +s.lon, label: s.loc } : null; })();
-  const ASK_KEY = `northstar:ask:${id}`;
-  const CHECK_KEY = `northstar:check:${id}`;
   const ME_KEY = 'northstar:me';
-  const answers = loadAnswers();
+  let checklist, answers;
   const profile = (() => { try { return JSON.parse(localStorage.getItem(ME_KEY)) ?? {}; } catch { return {}; } })();
   profile.city ??= loadSearch().loc ?? '';
   profile.extras ??= ['visits', 'cost'];
@@ -165,6 +163,8 @@
     const para = t => `<p>${glossify(esc(t), seen)}</p>`;
 
     const crit = parseCriteria(elig.eligibilityCriteria);
+    checklist = checklistAnswersFor(id, crit, st.lastUpdatePostDateStruct?.date);
+    answers = checklist.answers;
     const critSeen = new Set();
     const critList = (items, side) => items.map((c, n) => {
       const key = `${side}${n}`, a = c.head ? '' : answers[key] ?? '';
@@ -289,6 +289,7 @@
                   <p id="fitBody"></p>
                   <div class="fit-bar" aria-hidden="true"><i class="f"></i><i class="b"></i><i class="u"></i></div>
                   <p class="check-meta">Your answers stay on this device.</p>
+                  <p class="check-meta" id="checkReview" ${checklist.needsReview ? '' : 'hidden'}>Some saved answers could not be matched. Review the current questions.</p>
                 </div>
                 <div class="check-card-actions">
                   <button type="button" class="btn" id="checkGo" data-open-check="all"></button>
@@ -519,15 +520,6 @@
 
   /* ---------- Can I join? checklist ---------- */
   const ANS = [['y', 'Yes'], ['n', 'No'], ['u', 'Not sure']];
-  function loadAnswers() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(CHECK_KEY));
-      if (saved) return saved;
-      // Items flagged with the old "Ask" button carry over as "Not sure"
-      return Object.fromEntries(JSON.parse(localStorage.getItem(ASK_KEY) ?? '[]').map(k => [k, 'u']));
-    } catch { return {}; }
-  }
-
   function tally(crit) {
     const t = { total: 0, answered: 0, fit: [], block: [], unsure: [] };
     if (!crit) return t;
@@ -557,20 +549,7 @@
   function wireChecklist(crit) {
     if (!crit) return;
 
-    // Every answerable item in order. Each carries the group label above it ("Module 1, Part A") so a
-    // page can show it. A label covers the indented items right under it, or, when nothing under it
-    // is indented, everything up to the next label.
-    const steps = [];
-    for (const [side, items] of [['i', crit.in], ['o', crit.out]]) {
-      let heads = [], lastWasHead = false, mode = '';
-      items.forEach((c, i) => {
-        if (c.head) { if (!lastWasHead) heads = []; heads.push(c.text.replace(/:\s*$/, '')); lastWasHead = true; mode = ''; return; }
-        if (lastWasHead) mode = c.sub ? 'sub' : 'run';
-        else if (mode === 'sub' && !c.sub) heads = [];
-        lastWasHead = false;
-        steps.push({ key: side + i, side, text: c.text, sub: c.sub, ctx: heads.join(', ') });
-      });
-    }
+    const steps = checklistItems(crit);
     // Pages never mix the two groups.
     const pages = [];
     for (const side of ['i', 'o']) {
@@ -612,8 +591,8 @@
     const unanswered = () => steps.filter(x => !answers[x.key]).length;
 
     function setAnswer(key, v) {
-      if (v) answers[key] = v; else delete answers[key];
-      try { localStorage.setItem(CHECK_KEY, JSON.stringify(answers)); } catch {}
+      checklist.setAnswer(key, v);
+      $('#checkReview').hidden = !checklist.needsReview;
       $$(`li[data-key="${key}"]`, drawer).forEach(li => {
         $$('button', li).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
         li.classList.remove('is-fit', 'is-block', 'is-unsure');
@@ -801,7 +780,7 @@
     async function open(from) {
       if (!studyData) return;
       opener = from;
-      bodyEl.innerHTML = buildBrief(studyData, { answers, profile, search: loadSearch(), version: await dataVersion() });
+      bodyEl.innerHTML = buildBrief(studyData, { answers, needsReview: checklist.needsReview, profile, search: loadSearch(), version: await dataVersion() });
       root.hidden = false;
       wasLocked = document.documentElement.classList.contains('drawer-open');
       document.documentElement.classList.add('drawer-open');
