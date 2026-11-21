@@ -20,7 +20,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="assets/app.js?v=study-load-1"></script>
+<script src="assets/app.js?v=study-masking-1"></script>
 <script>
 (() => {
 
@@ -48,13 +48,33 @@
       FACTORIAL: 'Several treatments are tested in different combinations at once.',
     }[info.interventionModel];
     if (model) out.push([I.people, model]);
-    const mask = info.maskingInfo?.masking;
-    if (mask === 'NONE') out.push([I.eye, 'Nothing is hidden. You and your doctors will know which treatment you get. This is called open-label.']);
-    if (mask === 'SINGLE') out.push([I.eye, 'You won’t know which treatment you’re getting, but your doctors will.']);
-    if (['DOUBLE', 'TRIPLE', 'QUADRUPLE'].includes(mask)) out.push([I.eye, 'Neither you nor your doctors will know which treatment you get until the study ends. This is called double-blind, and it keeps the results fair.']);
+    const masking = maskingLine(info.maskingInfo);
+    if (masking) out.push([I.eye, masking]);
     if (arms.some(a => a.type === 'PLACEBO_COMPARATOR')) out.push([I.pill, 'Some people will get a placebo, which looks like the treatment but has no active drug.']);
     if (arms.some(a => a.type === 'SHAM_COMPARATOR')) out.push([I.pill, 'Some people will get a sham procedure, which looks like the real one but doesn’t do anything.']);
     return out;
+  }
+
+  function maskingLine(info) {
+    if (!info) return '';
+    if (info.masking === 'NONE') return 'This study is open-label. The study record reports no blinding.';
+
+    const labels = new Map([
+      ['PARTICIPANT', 'participants'],
+      ['CARE_PROVIDER', 'the people providing study care'],
+      ['INVESTIGATOR', 'the researchers running the study'],
+      ['OUTCOMES_ASSESSOR', 'the people assessing the results'],
+    ]);
+    const roles = Array.isArray(info.whoMasked) ? [...new Set(info.whoMasked)] : [];
+    const named = roles.map(role => labels.get(role)).filter(Boolean);
+    if (named.length) {
+      const list = new Intl.ListFormat('en-US', { type: 'conjunction' }).format(named);
+      return `The study record says these roles are blinded (not told which study group a participant is in): ${list}.`;
+    }
+    if (['SINGLE', 'DOUBLE', 'TRIPLE', 'QUADRUPLE'].includes(info.masking)) {
+      return 'The study record reports blinding but doesn’t specify who is blinded.';
+    }
+    return '';
   }
 
   const ARM = {
