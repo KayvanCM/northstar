@@ -104,11 +104,10 @@ img, svg { display: block; }
 }
 .site-header .wrap { display: flex; align-items: center; gap: 40px; height: 68px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
-/* The app icon itself (assets/mark.png, cropped from northstar-icon), so header, loaders and the brief match the favicon. */
+/* The header, loaders and study brief share the compass artwork. */
 .brand-mark {
-  width: 30px; height: 30px; border-radius: 32%;
-  background: #DCE3EA url("mark.png") center / cover no-repeat;
-  box-shadow: inset 0 0 0 1px rgba(23, 63, 67, .08);
+  width: 30px; height: 30px;
+  background: url("mark.png") center / contain no-repeat;
   display: grid; place-items: center;
 }
 .brand-mark svg { display: none; }
