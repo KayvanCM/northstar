@@ -510,7 +510,7 @@ function buildBrief(d, { answers = {}, needsReview = false, profile = {}, search
       </section>
 
       <footer class="sh-foot">
-        Prepared with Northstar, an independent design concept not affiliated with the National Library of Medicine, NIH, or the study sponsor. Study details come from ClinicalTrials.gov${version?.dataTimestamp ? `, data as of ${esc(new Date(version.dataTimestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. Answers are the patient’s own and have not been reviewed.
+        Prepared with Northstar, an independent project not affiliated with the National Library of Medicine, NIH, or the study sponsor. Study details come from the public registry ClinicalTrials.gov${version?.dataTimestamp ? `, data as of ${esc(new Date(version.dataTimestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. Answers are the patient’s own and have not been reviewed.
       </footer>
     </article>`;
 }
@@ -884,7 +884,8 @@ function mountChrome(active) {
     <div class="wrap">
       <div>
         <a class="brand" href="index.html"><span class="brand-mark">${I.mark}</span><span class="brand-word">Northstar</span></a>
-        <p>Northstar is an independent design concept. It is not affiliated with the National Library of Medicine, NIH, or any study sponsor, and nothing here is medical advice. Every study listed comes directly from <a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>. Talk with your doctor before joining a study.</p>
+        <p>Northstar helps you find and understand clinical studies using public data from <a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>, a U.S. government registry. <a href="https://github.com/KayvanCM/northstar" target="_blank" rel="noopener">View the source code on GitHub</a>.</p>
+        <p>Northstar is independent and is not affiliated with the National Library of Medicine, NIH, or any study sponsor. This is not medical advice. Talk with your doctor before joining a study.</p>
       </div>
       <div class="foot-meta">
         <div>Data refreshed <span data-sync-date>daily</span></div>
