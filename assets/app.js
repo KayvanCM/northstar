@@ -69,10 +69,10 @@ function fmtMiles(mi) {
 }
 
 /* ---------- API ---------- */
-async function api(path, params = {}) {
+async function api(path, params = {}, { signal } = {}) {
   const url = new URL(API + path);
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`ClinicalTrials.gov returned ${res.status}`);
   return res.json();
 }

@@ -20,18 +20,13 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="assets/app.js?v=footer-2"></script>
+<script src="assets/app.js?v=study-load-1"></script>
 <script>
-  mountChrome('find');
-  $('[data-mark]').innerHTML = I.mark;
+(() => {
 
   const id = (new URLSearchParams(location.search).get('id') ?? '').toUpperCase().trim();
-  const me = (() => { const s = loadSearch(); return s.lat !== '' && s.lat != null ? { lat: +s.lat, lon: +s.lon, label: s.loc } : null; })();
   const ME_KEY = 'northstar:me';
-  let checklist, answers;
-  const profile = (() => { try { return JSON.parse(localStorage.getItem(ME_KEY)) ?? {}; } catch { return {}; } })();
-  profile.city ??= loadSearch().loc ?? '';
-  profile.extras ??= ['visits', 'cost'];
+  let me, profile, checklist, answers;
 
   /* ---------- Plain-language study design ---------- */
   function designLines(p) {
@@ -84,9 +79,15 @@
   /* ---------- Render ---------- */
   async function load() {
     if (!/^NCT\d{8}$/.test(id)) return fail('That doesn’t look like a study ID', 'Study IDs look like NCT01234567.');
+    const request = new AbortController();
+    const timer = setTimeout(() => request.abort(), 12000);
     let d;
-    try { d = await api(`/studies/${id}`); }
-    catch (err) { return fail('We couldn’t load this study', `${err.message}. It may have been removed, or ClinicalTrials.gov may be busy.`); }
+    try { d = await api(`/studies/${id}`, {}, { signal: request.signal }); }
+    catch (err) {
+      return fail('We couldn’t load this study', request.signal.aborted
+        ? 'ClinicalTrials.gov took too long to respond. Try refreshing this page.'
+        : `${err.message}. It may have been removed, or ClinicalTrials.gov may be busy.`);
+    } finally { clearTimeout(timer); }
     render(d);
   }
 
@@ -510,9 +511,9 @@
     wireReach({ idm, recips, crit });
     wireFollowUp(idm.nctId);
     drawTimeline(st);
-    if (sites.length) drawSites(sites);
+    if (sites.length && typeof L !== 'undefined') drawSites(sites);
     wireToc();
-    if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+    if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
   }
 
   function title(s) { return s ? s.toLowerCase().replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()) : ''; }
@@ -1066,7 +1067,25 @@
     $$('.sec').forEach(s => io.observe(s));
   }
 
-  load();
+  async function start() {
+    try {
+      const search = loadSearch();
+      me = search.lat !== '' && search.lat != null ? { lat: +search.lat, lon: +search.lon, label: search.loc } : null;
+      try { profile = JSON.parse(localStorage.getItem(ME_KEY)) ?? {}; } catch { profile = {}; }
+      if (typeof profile !== 'object' || Array.isArray(profile)) profile = {};
+      profile.city ??= search.loc ?? '';
+      profile.extras ??= ['visits', 'cost'];
+      mountChrome('find');
+      $('[data-mark]').innerHTML = I.mark;
+      await load();
+    } catch (err) {
+      console.error('Study page failed to load', err);
+      // Still offer a way out if the shared script itself failed to load.
+      document.getElementById('page').innerHTML = '<div class="wrap" style="padding:80px 0"><div class="state"><h2>We couldn’t display this study</h2><p>Try refreshing this page. If it still doesn’t load, you can find the study on ClinicalTrials.gov.</p><a class="btn" href="https://clinicaltrials.gov/">Open ClinicalTrials.gov</a></div></div>';
+    }
+  }
+  return start();
+})();
 </script>
 </body>
 </html>
