@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Northstar · Find a Clinical Study You Could Be Part Of</title>
 <meta name="description" content="Search every recruiting clinical study on ClinicalTrials.gov, explained in plain words.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23173F43%22/%3E%3Cg%20transform%3D%22translate%284%204%29%22%20color%3D%22%23AFD5CF%22%3E%3Cpath%20d%3D%22M12%202.5%2015.4%2012H8.6zM13.7%2012a1.7%201.7%200%200%200-3.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22/%3E%3Cpath%20d%3D%22M8.6%2012h6.8L12%2021.5zM10.3%2012a1.7%201.7%200%200%200%203.4%200z%22%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22%20opacity%3D%22.45%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="assets/icon-64.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -130,7 +131,8 @@
 
   autocomplete(condEl, {
     fetch: suggestConditions,
-    pick: v => { condEl.value = v; fitCond(); },
+    render: renderCondition,
+    pick: g => { condEl.value = g.label; fitCond(); },
   });
   autocomplete(locEl, {
     fetch: geocode,
