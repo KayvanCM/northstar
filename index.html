@@ -29,15 +29,11 @@
           near
           <span class="nobr"><span class="slot slot-loc combo"><label class="sr-only" for="loc">Location</label><input id="loc" name="loc" placeholder="a city"></span>.</span>
         </p>
-        <div class="sentence-foot">
-          <div class="hint">
-            <button type="button" class="locate" id="locate"></button>
-            <span>Try <a href="#" data-try="Type 1 Diabetes">type 1 diabetes</a>, <a href="#" data-try="Long COVID">long COVID</a>, or <a href="#" data-try="Breast Cancer">breast cancer</a></span>
-          </div>
+        <div class="sentence-foot" style="justify-content:flex-start;column-gap:24px">
           <button class="btn" type="submit">Show Studies <span data-icon="arrow"></span></button>
+          <a href="record.html" style="color:var(--link);text-decoration:underline;text-underline-offset:.2em">Drop in a medical record</a>
         </div>
       </form>
-      <p style="margin-top:1rem"><a href="record.html">Use a medical record to find studies</a></p>
     </div>
   </section>
 
@@ -144,26 +140,6 @@
   });
   locEl.addEventListener('input', () => { state.lat = state.lon = null; });
 
-
-  const locBtn = $('#locate');
-  locBtn.innerHTML = `${I.locate}<span>Use My Location</span>`;
-  locBtn.addEventListener('click', async () => {
-    locBtn.lastChild.textContent = 'Finding You…';
-    try {
-      const r = await locateMe();
-      Object.assign(state, { loc: r.label, lat: r.lat, lon: r.lon });
-      locEl.value = r.label; fitLoc();
-      locBtn.lastChild.textContent = 'Using Your Location';
-    } catch (err) {
-      toast(err.message);
-      locBtn.lastChild.textContent = 'Use My Location';
-    }
-  });
-
-  $$('[data-try]').forEach(a => a.addEventListener('click', e => {
-    e.preventDefault();
-    condEl.value = a.dataset.try; fitCond(); condEl.focus();
-  }));
 
   $('#search').addEventListener('submit', async e => {
     e.preventDefault();
