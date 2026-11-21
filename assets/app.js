@@ -884,7 +884,7 @@ function mountChrome(active) {
     <div class="wrap">
       <div>
         <a class="brand" href="index.html"><span class="brand-mark">${I.mark}</span><span class="brand-word">Northstar</span></a>
-        <p>Northstar helps you find and understand clinical studies using public data from <a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>, a U.S. government registry. <a href="https://github.com/KayvanCM/northstar" target="_blank" rel="noopener">View the source code on GitHub</a>.</p>
+        <p>Northstar helps you find and understand clinical studies using public data from <a href="https://clinicaltrials.gov" target="_blank" rel="noopener">ClinicalTrials.gov</a>, a U.S. government registry.</p>
         <p>Northstar is independent and is not affiliated with the National Library of Medicine, NIH, or any study sponsor. This is not medical advice. Talk with your doctor before joining a study.</p>
       </div>
       <div class="foot-meta">
