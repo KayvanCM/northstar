@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northstar · Studies</title>
+<link rel="icon" type="image/png" href="assets/icon-64.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<main>
+  <section class="query-bar">
+    <div class="wrap">
+      <form id="q" autocomplete="off">
+        <p class="query-sentence">
+          Studies about
+          <span class="slot slot-cond combo"><label class="sr-only" for="cond">Condition</label><input id="cond" placeholder="a condition"></span>
+          near
+          <span class="nobr"><span class="slot slot-loc combo"><label class="sr-only" for="loc">Your city</label><input id="loc" placeholder="your city"></span>.</span>
+          <button type="submit" class="sr-only">Search</button>
+        </p>
+      </form>
+
+      <div class="filters" role="group" aria-label="Filters">
+        <span class="combo"><button type="button" class="chip" id="dist" aria-label="How far"><span data-label></span><span data-icon="chev"></span></button></span>
+        <button type="button" class="chip filters-toggle" id="filtersToggle" aria-expanded="false" aria-controls="moreFilters">Filters<span class="n" id="filtersN" hidden></span><span data-icon="chev"></span></button>
+        <div class="filters-more" id="moreFilters">
+          <button class="chip" id="fSoon" aria-pressed="false">Include Opening Soon</button>
+          <span class="combo"><button type="button" class="chip" id="phaseBtn" aria-haspopup="listbox" aria-expanded="false"><span data-label>Any Phase</span><span data-icon="chev"></span></button></span>
+          <span class="divider-v"></span>
+          <label class="age-field">My Age <input id="fAge" type="number" min="0" max="120" inputmode="numeric" aria-label="Your age"></label>
+          <span class="chip-group-label">I Am</span>
+          <button class="chip" data-sex="FEMALE" aria-pressed="false">Female</button>
+          <button class="chip" data-sex="MALE" aria-pressed="false">Male</button>
+          <button class="chip" data-healthy aria-pressed="false">Healthy Volunteer</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap results-layout">
+    <section aria-live="polite">
+      <div class="count-line">
+        <h1 id="countTitle"><span class="muted">Looking…</span></h1>
+        <div class="count-tools">
+          <button type="button" class="chip map-toggle" id="mapToggle" aria-pressed="false"><span data-icon="pin"></span>Map</button>
+          <span class="combo"><button type="button" class="chip" id="sort"><span data-label></span><span data-icon="chev"></span></button></span>
+        </div>
+      </div>
+      <p class="where-note" id="looseNote" hidden></p>
+      <ol class="study-list" id="list"></ol>
+      <div class="load-more" id="more" hidden><button class="btn btn-secondary">Show More Studies</button></div>
+    </section>
+
+    <aside class="map-col" aria-label="Map of study sites">
+      <div class="map-sticky">
+        <div id="map"></div>
+        <div class="map-legend" id="legend"><span><i style="background:var(--forest)"></i>Nearest site for each study</span></div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="assets/app.js"></script>
+<script>
+  $$('[data-icon]').forEach(el => { el.outerHTML = I[el.dataset.icon]; });
+  mountChrome('find');
+
+  /* ---------- State from URL ---------- */
+  const params = new URLSearchParams(location.search);
+  const num = v => (v === null || v === '' ? null : Number(v));
+  const S = {
+    cond:   params.get('cond') ?? '',
+    loc:    params.get('loc') ?? '',
+    lat:    num(params.get('lat')),
+    lon:    num(params.get('lon')),
+    // 'us' (default) or 'world' for a whole region, or a radius in miles around the city.
+    dist:   ({ '0': 'world' })[params.get('dist')] ?? params.get('dist') ?? 'us',
+    soon:   params.get('soon') === '1',
+    phase:  (params.get('phase') ?? '').split(',').filter(Boolean),
+    age:    num(params.get('age')),
+    sex:    params.get('sex') ?? '',
+    healthy:params.get('healthy') === '1',
+    sort:   params.get('sort') ?? 'best',
+  };
+  const hasGeo = () => S.lat != null && S.lon != null;
+  if (/^\d+$/.test(S.dist) && !hasGeo()) S.dist = 'us';
+  // Until someone picks a sort, a city means closest first.
+  let sortExplicit = params.has('sort');
+  const defaultSort = () => { if (!sortExplicit) S.sort = hasGeo() ? 'near' : 'best'; };
+  defaultSort();
+  const byMiles = () => hasGeo() && /^\d+$/.test(S.dist);
+
+  function syncUrl() {
+    const out = {
+      cond: S.cond, loc: hasGeo() ? S.loc : '', lat: S.lat ?? '', lon: S.lon ?? '', dist: S.dist,
+      soon: S.soon ? '1' : '', phase: S.phase.join(','), age: S.age ?? '', sex: S.sex, healthy: S.healthy ? '1' : '',
+      sort: sortExplicit ? S.sort : '',
+    };
+    history.replaceState(null, '', searchToUrl(out));
+    saveSearch({ cond: S.cond, loc: out.loc, lat: out.lat, lon: out.lon, dist: S.dist });
+    document.title = S.cond ? `Northstar · ${S.cond} Studies` : 'Northstar · Studies';
+  }
+
+  /* ---------- Query sentence ---------- */
+  const condEl = $('#cond'), locEl = $('#loc');
+  condEl.value = S.cond;
+  locEl.value = hasGeo() ? S.loc : '';
+  const fitCond = autosize(condEl, 10), fitLoc = autosize(locEl, 8);
+  let pendingGeo = null;
+
+  autocomplete(condEl, { fetch: suggestConditions, pick: v => { condEl.value = v; fitCond(); submit(); } });
+  autocomplete(locEl, {
+    fetch: geocode, render: r => esc(r.label),
+    pick: r => { locEl.value = r.label; fitLoc(); pendingGeo = r; submit(); },
+  });
+  locEl.addEventListener('input', () => { pendingGeo = null; });
+
+  const DISTANCES = [
+    { value: '25', label: 'Within 25 Miles' }, { value: '50', label: 'Within 50 Miles' },
+    { value: '100', label: 'Within 100 Miles' }, { value: '250', label: 'Within 250 Miles' },
+    { value: '500', label: 'Within 500 Miles' },
+    { value: 'us', label: 'Anywhere in the US' }, { value: 'world', label: 'Anywhere in the World' },
+  ];
+  const distDD = dropdown($('#dist'), {
+    options: DISTANCES, value: S.dist,
+    onChange: v => {
+      S.dist = v;
+      if (/^\d+$/.test(v) && !hasGeo()) { locEl.focus(); toast('Add your city to search by distance.'); return; }
+      run();
+    },
+  });
+
+  async function submit() {
+    S.cond = condEl.value.trim();
+    const loc = locEl.value.trim();
+    if (!loc) { S.loc = ''; S.lat = S.lon = null; }
+    else if (pendingGeo) { Object.assign(S, { loc: pendingGeo.label, lat: pendingGeo.lat, lon: pendingGeo.lon }); }
+    else if (loc !== S.loc || !hasGeo()) {
+      const [hit] = await geocode(loc);
+      if (hit) Object.assign(S, { loc: hit.label, lat: hit.lat, lon: hit.lon });
+      else { toast(`We couldn’t find that place, so we’re showing studies ${S.dist === 'world' ? 'everywhere' : 'across the US'}.`); S.loc = ''; S.lat = S.lon = null; locEl.value = ''; fitLoc(); }
+    }
+    pendingGeo = null;
+    // A radius needs a city. Without one, fall back to the whole country.
+    if (/^\d+$/.test(S.dist) && !hasGeo()) { S.dist = 'us'; distDD.value = 'us'; }
+    run();
+  }
+  $('#q').addEventListener('submit', e => { e.preventDefault(); submit(); });
+
+  /* ---------- Filters ---------- */
+  const soonBtn = $('#fSoon');
+  soonBtn.setAttribute('aria-pressed', String(S.soon));
+  soonBtn.addEventListener('click', () => { S.soon = !S.soon; soonBtn.setAttribute('aria-pressed', String(S.soon)); run(); });
+
+  /* Phase: one dropdown, several can be on at once. The menu stays open while you pick. */
+  const PHASES = [['PHASE1', 'Phase 1', 'Is it safe?'], ['PHASE2', 'Phase 2', 'Does it work?'], ['PHASE3', 'Phase 3', 'Is it better?'], ['PHASE4', 'Phase 4', 'After approval']];
+  const phaseBtn = $('#phaseBtn'), phaseCombo = phaseBtn.closest('.combo');
+  const phaseMenu = Object.assign(document.createElement('ul'), { className: 'combo-menu' });
+  phaseMenu.setAttribute('role', 'listbox'); phaseMenu.setAttribute('aria-multiselectable', 'true');
+  phaseCombo.appendChild(phaseMenu);
+  function paintPhase() {
+    phaseMenu.innerHTML = PHASES.map(([v, l, plain]) => `<li role="option" data-v="${v}" aria-selected="${S.phase.includes(v)}" class="${S.phase.includes(v) ? 'check' : ''}"><span>${l} <small>${plain}</small></span></li>`).join('')
+      + (S.phase.length ? '<li class="combo-clear" data-clear>Any Phase</li>' : '');
+    const on = PHASES.filter(([v]) => S.phase.includes(v)).map(([, l]) => l.replace('Phase ', ''));
+    $('[data-label]', phaseBtn).textContent = on.length ? `Phase ${on.join(', ')}` : 'Any Phase';
+    phaseBtn.setAttribute('aria-pressed', String(on.length > 0));
+  }
+  phaseBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    phaseBtn.setAttribute('aria-expanded', String(phaseCombo.classList.toggle('open')));
+  });
+  phaseMenu.addEventListener('click', e => {
+    e.stopPropagation();
+    const li = e.target.closest('li'); if (!li) return;
+    if (li.hasAttribute('data-clear')) S.phase = [];
+    else { const v = li.dataset.v; S.phase = S.phase.includes(v) ? S.phase.filter(x => x !== v) : [...S.phase, v]; }
+    paintPhase(); run();
+  });
+  document.addEventListener('click', e => { if (!phaseCombo.contains(e.target)) { phaseCombo.classList.remove('open'); phaseBtn.setAttribute('aria-expanded', 'false'); } });
+  phaseBtn.addEventListener('keydown', e => { if (e.key === 'Escape') { phaseCombo.classList.remove('open'); phaseBtn.setAttribute('aria-expanded', 'false'); } });
+  paintPhase();
+
+  /* Phones: everything but distance folds behind one Filters button */
+  const fToggle = $('#filtersToggle');
+  fToggle.addEventListener('click', () => {
+    const open = $('.filters').classList.toggle('open');
+    fToggle.setAttribute('aria-expanded', String(open));
+  });
+  function paintFilterCount() {
+    const n = [S.soon, S.phase.length > 0, S.age != null, !!S.sex, S.healthy].filter(Boolean).length;
+    $('#filtersN').hidden = !n; $('#filtersN').textContent = n;
+  }
+
+  $$('[data-sex]').forEach(b => {
+    b.setAttribute('aria-pressed', String(S.sex === b.dataset.sex));
+    b.addEventListener('click', () => {
+      S.sex = S.sex === b.dataset.sex ? '' : b.dataset.sex;
+      $$('[data-sex]').forEach(x => x.setAttribute('aria-pressed', String(S.sex === x.dataset.sex)));
+      run();
+    });
+  });
+
+  const healthyBtn = $('[data-healthy]');
+  healthyBtn.setAttribute('aria-pressed', String(S.healthy));
+  healthyBtn.addEventListener('click', () => { S.healthy = !S.healthy; healthyBtn.setAttribute('aria-pressed', String(S.healthy)); run(); });
+
+  const ageEl = $('#fAge');
+  if (S.age != null) ageEl.value = S.age;
+  let ageTimer;
+  ageEl.addEventListener('input', () => {
+    clearTimeout(ageTimer);
+    ageTimer = setTimeout(() => {
+      const v = ageEl.value.trim();
+      S.age = v === '' ? null : Math.max(0, Math.min(120, Math.round(+v)));
+      run();
+    }, 450);
+  });
+
+  const sortDD = dropdown($('#sort'), {
+    options: [{ value: 'best', label: 'Best Match' }, { value: 'near', label: 'Closest First' }, { value: 'new', label: 'Newest First' }],
+    value: S.sort,
+    onChange: v => {
+      if (v === 'near' && !hasGeo()) { sortDD.value = S.sort; locEl.focus(); toast('Add your city to sort by distance.'); return; }
+      S.sort = v; sortExplicit = true; run();
+    },
+  });
+
+  /* ---------- Fetch ---------- */
+  const FIELDS = [
+    'NCTId', 'BriefTitle', 'OverallStatus', 'Phase', 'StudyType', 'LeadSponsorName', 'BriefSummary',
+    'MinimumAge', 'MaximumAge', 'Sex', 'HealthyVolunteers', 'EnrollmentCount', 'InterventionType',
+    'Condition', 'LocationFacility', 'LocationCity', 'LocationState', 'LocationCountry', 'LocationGeoPoint', 'LocationStatus', 'StudyFirstPostDate',
+  ].join(',');
+
+  function buildParams() {
+    const adv = [];
+    if (S.age != null) {
+      const a = `${S.age} years`;
+      adv.push(`(AREA[MinimumAge]RANGE[MIN, ${a}] OR AREA[MinimumAge]MISSING)`);
+      adv.push(`(AREA[MaximumAge]RANGE[${a}, MAX] OR AREA[MaximumAge]MISSING)`);
+    }
+    if (S.sex) adv.push(`(AREA[Sex]${S.sex} OR AREA[Sex]ALL)`);
+    if (S.phase.length) adv.push(`(${S.phase.map(p => `AREA[Phase]${p}`).join(' OR ')})`);
+    if (S.healthy) adv.push('AREA[HealthyVolunteers]true');
+    if (S.dist !== 'world' && !byMiles()) adv.push('AREA[LocationCountry]"United States"');
+    return {
+      'query.cond': condQuery(S.cond, loose),
+      'filter.overallStatus': S.soon ? 'RECRUITING|NOT_YET_RECRUITING' : 'RECRUITING',
+      'filter.geo': byMiles() ? `distance(${S.lat},${S.lon},${S.dist}mi)` : '',
+      'filter.advanced': adv.join(' AND '),
+      sort: S.sort === 'new' ? 'StudyFirstPostDate:desc' : '',
+      fields: FIELDS,
+      pageSize: '20',
+      countTotal: 'true',
+    };
+  }
+
+  let studies = [], total = 0, runSeq = 0, near = null;
+  let loose = false; // true once an exact-phrase search came back empty and we widened it
+  const PAGE = 20;
+
+  /* ---------- Closest first ----------
+     The API can filter by radius but can't sort by distance. A radius search returns exactly the
+     studies with a site that close, so loading rings from the inside out and sorting each ring
+     by its nearest site gives a true nearest-first list. */
+  const RINGS = [10, 25, 50, 100, 250, 500, 1000, 2500];
+  const RING_CAP = 1000; // past this a ring is loaded partially, so its order is approximate
+  const byMi = (a, b) => (a.nearest?.mi ?? 1e9) - (b.nearest?.mi ?? 1e9);
+
+  async function startNear(base) {
+    const radii = byMiles() ? [...RINGS.filter(r => r < +S.dist), +S.dist] : RINGS;
+    const ringParams = r => ({ ...base, 'filter.geo': `distance(${S.lat},${S.lon},${r}mi)` });
+    const counts = await Promise.all(radii.map(r =>
+      api('/studies', { ...ringParams(r), pageSize: '1', fields: 'NCTId' }).then(d => d.totalCount ?? 0)));
+    return { base, ringParams, rings: radii.map((r, i) => ({ r, count: counts[i] })), next: 0, seen: new Set(), queue: [], tailToken: '', tailDone: byMiles() };
+  }
+
+  function take(nr, raw) {
+    const fresh = raw.filter(x => !nr.seen.has(x.protocolSection.identificationModule.nctId)).map(shape);
+    fresh.forEach(x => nr.seen.add(x.id));
+    nr.queue.push(...fresh.sort(byMi));
+  }
+
+  async function fillNear(nr, n) {
+    while (nr.queue.length < n) {
+      if (nr.next < nr.rings.length) {
+        // Jump straight to a wider ring when this one can't fill the page; the wider ring includes it.
+        let i = nr.next;
+        const need = n - nr.queue.length;
+        while (i + 1 < nr.rings.length && nr.rings[i].count - nr.seen.size < need && nr.rings[i + 1].count <= RING_CAP) i++;
+        nr.next = i + 1;
+        if (nr.rings[i].count <= nr.seen.size) continue;
+        let raw = [], token = '';
+        do {
+          const d = await api('/studies', { ...nr.ringParams(nr.rings[i].r), pageSize: '250', countTotal: '', pageToken: token });
+          raw = raw.concat(d.studies ?? []);
+          token = d.nextPageToken ?? '';
+        } while (token && raw.length < RING_CAP);
+        take(nr, raw);
+      } else if (!nr.tailDone) {
+        // Beyond the widest ring: whatever is left in the region, a page at a time.
+        const d = await api('/studies', { ...nr.base, pageSize: '100', countTotal: '', pageToken: nr.tailToken });
+        nr.tailToken = d.nextPageToken ?? '';
+        nr.tailDone = !nr.tailToken;
+        take(nr, d.studies ?? []);
+      } else break;
+    }
+  }
+
+  /* ---------- Pages ----------
+     Each page aims for a full set of focused studies (about the searched condition), plus a few of the
+     nearest broad ones for under the divider. Studies arrive in sort order into two pools, and the page
+     keeps pulling until it has PAGE focused studies, the source runs dry, or it has looked through
+     MAX_PULL more studies. Leftovers wait in the pools for the next page. */
+  const BROAD_PAGE = 10;
+  const MAX_PULL = 300;
+  let pool = { focused: [], broad: [] };
+  let pageToken = '', pagedDone = false; // Best Match / Newest: the API's own paging
+
+  const sourceLeft = () => near
+    ? near.queue.length > 0 || near.rings.slice(near.next).some(r => r.count > near.seen.size) || (!near.tailDone && near.seen.size < total)
+    : !pagedDone;
+  const hasMore = () => pool.focused.length > 0 || pool.broad.length > 0 || sourceLeft();
+
+  function intoPools(p, list) { for (const x of list) (x.focus.broad ? p.broad : p.focused).push(x); }
+
+  // Pull the next batch from the API into the pools. Returns how many studies arrived (0 = nothing left).
+  async function pull() {
+    const p = pool, nr = near; // a newer search swaps these, and its results must not mix with ours
+    if (!sourceLeft()) return 0;
+    if (nr) {
+      await fillNear(nr, PAGE);
+      if (p !== pool) return 0;
+      const got = nr.queue.splice(0);
+      intoPools(p, got);
+      return got.length;
+    }
+    const d = await api('/studies', { ...buildParams(), pageSize: '50', countTotal: '', pageToken });
+    if (p !== pool) return 0;
+    pageToken = d.nextPageToken ?? ''; pagedDone = !pageToken;
+    const got = (d.studies ?? []).map(shape);
+    intoPools(p, got);
+    return got.length;
+  }
+
+  async function nextPage(mine) {
+    let looked = 0;
+    while (pool.focused.length < PAGE && looked < MAX_PULL) {
+      const n = await pull();
+      if (mine !== runSeq) return;
+      if (!n) break;
+      looked += n;
+    }
+    const f = pool.focused.splice(0, PAGE);
+    // Short on focused studies? Fill the page with broad ones instead.
+    const b = pool.broad.splice(0, f.length < PAGE ? Math.max(BROAD_PAGE, PAGE - f.length) : BROAD_PAGE);
+    studies = studies.concat(f, b);
+  }
+
+  async function run(widened = false) {
+    if (!widened) loose = false;
+    paintFilterCount();
+    defaultSort();
+    sortDD.value = S.sort;
+    syncUrl();
+    const mine = ++runSeq;
+    studies = []; near = null; pool = { focused: [], broad: [] }; pageToken = ''; pagedDone = false;
+    $('#more').hidden = true;
+    $('#countTitle').innerHTML = '<span class="muted">Looking…</span>';
+    $('#list').innerHTML = '<li class="skeleton"></li>'.repeat(4);
+    clearMap();
+    try {
+      if (S.sort === 'near' && hasGeo()) {
+        const base = buildParams();
+        const [d, nr] = await Promise.all([api('/studies', { ...base, pageSize: '1', fields: 'NCTId' }), startNear(base)]);
+        if (mine !== runSeq) return;
+        total = d.totalCount ?? 0;
+        if (!total && !loose && isPhrase(S.cond)) { loose = true; return run(true); }
+        near = nr;
+      } else {
+        const d = await api('/studies', { ...buildParams(), pageSize: '50' });
+        if (mine !== runSeq) return;
+        total = d.totalCount ?? 0;
+        if (!total && !loose && isPhrase(S.cond)) { loose = true; return run(true); }
+        pageToken = d.nextPageToken ?? ''; pagedDone = !pageToken;
+        intoPools(pool, (d.studies ?? []).map(shape));
+      }
+      await nextPage(mine);
+      if (mine !== runSeq) return;
+      render();
+    } catch (err) {
+      if (mine !== runSeq) return;
+      $('#countTitle').textContent = 'Something went wrong';
+      $('#list').innerHTML = `<li class="state"><h2>We couldn’t reach ClinicalTrials.gov</h2><p>${esc(err.message)}. This is usually temporary.</p><button class="btn" onclick="run()">Try Again</button></li>`;
+    }
+  }
+
+  async function loadMore() {
+    if (!hasMore()) return;
+    const btn = $('#more button'), mine = runSeq, before = studies.length;
+    btn.textContent = 'Loading…';
+    try {
+      await nextPage(mine);
+      if (mine !== runSeq) return;
+      render(before);
+      // New focused studies land above the divider, out of view from the button. Take people to them.
+      const first = $('.study-card:not(.seen)');
+      if (first && first.getBoundingClientRect().top < 0) first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch { toast('Couldn’t load more studies. Try again.'); }
+    if (mine === runSeq && hasMore()) btn.textContent = `Show More Studies (${fmtNum(studies.length)} of ${fmtNum(total)})`;
+  }
+  $('#more button').addEventListener('click', loadMore);
+
+  /* ---------- Shape one API study into what the card needs ---------- */
+  function shape(raw) {
+    const p = raw.protocolSection;
+    const usOnly = S.dist === 'us';
+    const locs = (p.contactsLocationsModule?.locations ?? []).filter(l => l.geoPoint && (!usOnly || l.country === 'United States'));
+    const allLocs = p.contactsLocationsModule?.locations ?? [];
+    let nearest = null;
+    if (hasGeo() && locs.length) {
+      const me = { lat: S.lat, lon: S.lon };
+      for (const l of locs) {
+        const mi = milesBetween(me, { lat: l.geoPoint.lat, lon: l.geoPoint.lon });
+        const openBonus = l.status === 'RECRUITING' ? 0 : 0.5; // prefer open sites on near-ties
+        if (!nearest || mi + openBonus < nearest.mi + nearest.bonus) nearest = { ...l, mi, bonus: openBonus };
+      }
+    } else if (locs.length) {
+      nearest = locs.find(l => l.status === 'RECRUITING') ?? locs[0];
+    }
+    return {
+      id: p.identificationModule.nctId,
+      title: p.identificationModule.briefTitle,
+      status: p.statusModule?.overallStatus,
+      posted: p.statusModule?.studyFirstPostDateStruct?.date,
+      phases: p.designModule?.phases ?? [],
+      type: p.designModule?.studyType,
+      enroll: p.designModule?.enrollmentInfo?.count,
+      sponsor: p.sponsorCollaboratorsModule?.leadSponsor?.name,
+      summary: unescapeMd(p.descriptionModule?.briefSummary ?? ''),
+      minAge: p.eligibilityModule?.minimumAge,
+      maxAge: p.eligibilityModule?.maximumAge,
+      sex: p.eligibilityModule?.sex,
+      healthy: p.eligibilityModule?.healthyVolunteers,
+      kinds: [...new Set((p.armsInterventionsModule?.interventions ?? []).map(i => i.type))].filter(t => t !== 'OTHER'),
+      siteCount: allLocs.length,
+      nearest,
+      focus: studyFocus(S.cond, p.identificationModule.briefTitle, p.conditionsModule?.conditions ?? []),
+    };
+  }
+
+  /* ---------- Render ---------- */
+  function render(appendFrom = 0) {
+    // Studies about the searched condition come first. Broad "basket" studies that merely include it
+    // follow under a divider. Each tier keeps the chosen sort (closest-first lists arrive in distance order).
+    const focused = studies.filter(s => !s.focus.broad), broad = studies.filter(s => s.focus.broad);
+    const sorted = [...focused, ...broad];
+
+    const region = S.dist === 'world' ? ' worldwide' : ' in the US';
+    const where = byMiles() ? ` within ${S.dist} miles of ${esc(S.loc)}` : region;
+    const verb = S.soon ? 'are recruiting or opening soon' : 'are recruiting';
+    $('#countTitle').innerHTML = total
+      ? `<span class="num">${fmtNum(total)}</span> ${total === 1 ? 'study' : 'studies'} ${total === 1 ? verb.replace('are', 'is') : verb}${where}`
+      : 'No studies match yet';
+    $('#looseNote').hidden = !(loose && total);
+    $('#looseNote').textContent = `Nothing uses the exact words “${S.cond}”, so these studies match some of them.`;
+
+    if (!studies.length) {
+      $('#list').innerHTML = `<li class="state">
+        <h2>Nothing matches all of that</h2>
+        <p>Try a wider distance, remove a filter, or use a broader term like “cancer” instead of a specific type.</p>
+        ${S.dist !== 'world' ? `<button class="btn" id="widen">${byMiles() ? 'Search Anywhere in the US' : 'Search Worldwide'}</button>` : ''}
+      </li>`;
+      $('#widen')?.addEventListener('click', () => { S.dist = byMiles() ? 'us' : 'world'; distDD.value = S.dist; run(); });
+      $('#more').hidden = true;
+      return;
+    }
+
+    // Loading more can add focused studies above the divider, so the list is redrawn each time.
+    // Cards already on screen skip the entrance animation.
+    const fresh = new Set(studies.slice(appendFrom).map(s => s.id));
+    const cond = esc(midSentence(S.cond));
+    const divider = broad.length && S.cond ? `<li class="tier-divider">
+        <h2>${focused.length ? `Also open to people with ${cond}` : `These include ${cond} among other conditions`}</h2>
+        <p>Each of these studies covers several conditions or many cancer types. Who can join, including age and sex, is set for the whole study, so check that your condition is one of the groups.</p>
+      </li>` : '';
+    let n = 0;
+    $('#list').innerHTML = focused.map(s => card(s, fresh.has(s.id) ? n++ : -1)).join('') + divider + broad.map(s => card(s, fresh.has(s.id) ? n++ : -1)).join('');
+    $('#more').hidden = !hasMore();
+    $('#more button').textContent = hasMore() ? `Show More Studies (${fmtNum(studies.length)} of ${fmtNum(total)})` : '';
+    drawMap(sorted);
+  }
+
+  function card(s, i) {
+    const phase = phaseLabel(s.phases, s.type);
+    const kinds = s.kinds.slice(0, s.focus.label ? 1 : 2).map(k => `<span class="tag">${esc(INTERVENTION[k] ?? k)}</span>`).join('');
+    const near = s.nearest
+      ? `<span>${I.pin}<span><b>${esc(s.nearest.city ?? s.nearest.facility ?? '')}${s.nearest.state ? `, ${esc(STATE_ABBR[s.nearest.state] ?? s.nearest.state)}` : ''}</b>${s.nearest.mi != null ? ` ${fmtMiles(s.nearest.mi)}` : ''}${s.siteCount > 1 ? ` <span class="muted">+${fmtNum(s.siteCount - 1)} more ${s.siteCount - 1 === 1 ? 'site' : 'sites'}</span>` : ''}</span></span>`
+      : s.siteCount ? `<span>${I.pin}${plural(s.siteCount, 'site')}</span>` : '';
+    const who = `${ageRange(s.minAge, s.maxAge)}${s.sex && s.sex !== 'ALL' ? `, ${SEX[s.sex].toLowerCase()}` : ''}`;
+    return `<li><a class="study-card${i < 0 ? ' seen' : ''}" href="study.html?id=${esc(s.id)}" data-id="${esc(s.id)}" style="--i:${Math.max(i, 0)}">
+      <div class="card-top">
+        ${statusTag(s.status)}
+        ${phase ? `<span class="tag">${esc(phase)}</span>` : ''}
+        ${s.focus.label ? `<span class="tag tag-wide">${esc(s.focus.label)}</span>` : ''}
+        ${kinds}
+        <span class="nct">${esc(s.id)}</span>
+      </div>
+      <h2 title="${esc(s.title)}">${esc(s.title)}</h2>
+      ${s.sponsor ? `<p class="card-sponsor">Run by ${esc(s.sponsor)}</p>` : ''}
+      ${s.summary ? `<p class="card-summary">${esc(s.summary)}</p>` : ''}
+      <div class="card-facts">
+        ${near}
+        <span>${I.person}${esc(who)}</span>
+        ${s.enroll ? `<span>${I.people}${fmtNum(s.enroll)} people</span>` : ''}
+        ${s.healthy ? `<span>${I.heart}Healthy volunteers welcome</span>` : ''}
+      </div>
+    </a></li>`;
+  }
+
+  /* ---------- Map ---------- */
+  const map = makeMap($('#map'));
+  // Phones: the list comes first and the map opens on request.
+  $('#mapToggle').addEventListener('click', e => {
+    const on = document.body.classList.toggle('show-map');
+    e.currentTarget.setAttribute('aria-pressed', String(on));
+    if (on) { setTimeout(() => { map.invalidateSize(); drawMap(studies); }, 30); window.scrollTo({ top: $('.results-layout').offsetTop - 80, behavior: 'smooth' }); }
+  });
+  const layer = L.layerGroup().addTo(map);
+  const markers = new Map();
+
+  function clearMap() { layer.clearLayers(); markers.clear(); }
+
+  function drawMap(list) {
+    clearMap();
+    map.invalidateSize();
+    const pts = [];
+    if (hasGeo()) {
+      youMarker(S.lat, S.lon).bindTooltip('You', { direction: 'top', offset: [0, -8] }).addTo(layer);
+      pts.push([S.lat, S.lon]);
+      if (byMiles()) {
+        L.circle([S.lat, S.lon], { radius: +S.dist * 1609.34, color: '#173F43', weight: 1, opacity: .25, fillColor: '#AFD5CF', fillOpacity: .12, interactive: false }).addTo(layer);
+      }
+    }
+    for (const s of list) {
+      const g = s.nearest?.geoPoint;
+      if (!g) continue;
+      const m = dotMarker(g.lat, g.lon).addTo(layer);
+      m.bindPopup(`<b>${esc(s.title)}</b>${esc(s.nearest.facility ?? '')}${s.nearest.mi != null ? `, ${fmtMiles(s.nearest.mi)}` : ''}<br><a href="study.html?id=${esc(s.id)}">View study</a>`, { maxWidth: 260 });
+      m.on('mouseover', () => highlight(s.id, true));
+      m.on('mouseout', () => highlight(s.id, false));
+      m.on('click', () => {
+        const el = $(`.study-card[data-id="${s.id}"]`);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      markers.set(s.id, m);
+      pts.push([g.lat, g.lon]);
+    }
+    if (byMiles()) {
+      map.fitBounds(L.latLng(S.lat, S.lon).toBounds(+S.dist * 1609.34 * 2.1), { animate: false, padding: [20, 20] });
+    } else if (pts.length > 1) {
+      map.fitBounds(pts, { animate: false, padding: [40, 40], maxZoom: 9 });
+    } else if (pts.length === 1) {
+      map.setView(pts[0], 8, { animate: false });
+    }
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+
+  function highlight(id, on) {
+    $(`.study-card[data-id="${id}"]`)?.classList.toggle('hot', on);
+    markers.get(id)?.getElement()?.querySelector('.pin')?.classList.toggle('hot', on);
+    if (on) markers.get(id)?.setZIndexOffset(900); else markers.get(id)?.setZIndexOffset(0);
+  }
+  $('#list').addEventListener('mouseover', e => { const c = e.target.closest('.study-card'); if (c) highlight(c.dataset.id, true); });
+  $('#list').addEventListener('mouseout',  e => { const c = e.target.closest('.study-card'); if (c && !c.contains(e.relatedTarget)) highlight(c.dataset.id, false); });
+
+  /* ---------- Go ---------- */
+  if (!S.cond) {
+    $('#countTitle').textContent = 'What are you looking for?';
+    $('#list').innerHTML = `<li class="state"><h2>Start with a condition</h2><p>Type a condition in the sentence above, like “asthma” or “breast cancer”. Add a city to see what’s near you.</p></li>`;
+    condEl.focus();
+  } else {
+    run();
+  }
+</script>
+</body>
+</html>

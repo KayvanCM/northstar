@@ -54,6 +54,8 @@
         </div>
       </div>
       <p class="where-note" id="looseNote" hidden></p>
+      <p class="where-note" id="akaNote" hidden></p>
+      <p class="where-note wider-note" id="widerNote" hidden></p>
       <ol class="study-list" id="list"></ol>
       <div class="load-more" id="more" hidden><button class="btn btn-secondary">Show More Studies</button></div>
     </section>
@@ -453,8 +455,35 @@
       kinds: [...new Set((p.armsInterventionsModule?.interventions ?? []).map(i => i.type))].filter(t => t !== 'OTHER'),
       siteCount: allLocs.length,
       nearest,
-      focus: studyFocus(S.cond, p.identificationModule.briefTitle, p.conditionsModule?.conditions ?? []),
+      focus: studyFocus(searchTerm(S.cond), p.identificationModule.briefTitle, p.conditionsModule?.conditions ?? []),
     };
+  }
+
+  /* ---------- Other names, and a broader name with more studies ---------- */
+  // "Also called T1D or T1DM" reassures that one search covers the disease. A narrow label like
+  // "Type 1 Diabetes Mellitus With Hypoglycemia" (9 studies) points to its broader name (163).
+  async function explainName(mine) {
+    const akaEl = $('#akaNote'), wideEl = $('#widerNote');
+    akaEl.hidden = wideEl.hidden = true;
+    const term = searchTerm(S.cond);
+    if (!term) return;
+    const wider = broaderName(term);
+    const [groups, d] = await Promise.all([
+      suggestConditions(term),
+      wider ? api('/studies', { ...buildParams(), 'query.cond': condQuery(wider), pageSize: '1', fields: 'NCTId' }).catch(() => null) : null,
+    ]);
+    if (mine !== runSeq) return;
+    const me = groups.find(g => g.key === nameKey(term));
+    if (me?.aka.length && total) {
+      akaEl.textContent = `Also called ${orList(me.aka)}.`;
+      akaEl.hidden = false;
+    }
+    const n = d?.totalCount ?? 0;
+    if (wider && n >= total + 5 && n >= total * 1.5) {
+      const href = searchToUrl({ cond: wider, loc: hasGeo() ? S.loc : '', lat: S.lat ?? '', lon: S.lon ?? '', dist: S.dist });
+      wideEl.innerHTML = `${total > 1 ? 'These studies list' : total ? 'This study lists' : 'No studies list'} “${esc(midSentence(term))}” exactly. <a href="${esc(href)}">${fmtNum(n)} ${n === 1 ? 'study' : 'studies'} for ${esc(midSentence(wider))}</a> match your other choices.`;
+      wideEl.hidden = false;
+    }
   }
 
   /* ---------- Render ---------- */
@@ -471,7 +500,8 @@
       ? `<span class="num">${fmtNum(total)}</span> ${total === 1 ? 'study' : 'studies'} ${total === 1 ? verb.replace('are', 'is') : verb}${where}`
       : 'No studies match yet';
     $('#looseNote').hidden = !(loose && total);
-    $('#looseNote').textContent = `Nothing uses the exact words “${S.cond}”, so these studies match some of them.`;
+    $('#looseNote').textContent = `Nothing uses the exact words “${searchTerm(S.cond)}”, so these studies match some of them.`;
+    if (!appendFrom) explainName(runSeq);
 
     if (!studies.length) {
       $('#list').innerHTML = `<li class="state">
@@ -487,7 +517,7 @@
     // Loading more can add focused studies above the divider, so the list is redrawn each time.
     // Cards already on screen skip the entrance animation.
     const fresh = new Set(studies.slice(appendFrom).map(s => s.id));
-    const cond = esc(midSentence(S.cond));
+    const cond = esc(midSentence(searchTerm(S.cond)));
     const divider = broad.length && S.cond ? `<li class="tier-divider">
         <h2>${focused.length ? `Also open to people with ${cond}` : `These include ${cond} among other conditions`}</h2>
         <p>Each of these studies covers several conditions or many cancer types. Who can join, including age and sex, is set for the whole study, so check that your condition is one of the groups.</p>

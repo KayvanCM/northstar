@@ -104,12 +104,14 @@ img, svg { display: block; }
 }
 .site-header .wrap { display: flex; align-items: center; gap: 40px; height: 68px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+/* The app icon itself (assets/mark.png, cropped from northstar-icon), so header, loaders and the brief match the favicon. */
 .brand-mark {
-  width: 30px; height: 30px; border-radius: 8px;
-  background: var(--forest); color: var(--sage);
+  width: 30px; height: 30px; border-radius: 32%;
+  background: #DCE3EA url("mark.png") center / cover no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(23, 63, 67, .08);
   display: grid; place-items: center;
 }
-.brand-mark svg { width: 20px; height: 20px; }
+.brand-mark svg { display: none; }
 .brand-word { font-family: var(--display); font-weight: 400; font-size: 22px; letter-spacing: -.03em; line-height: 1; }
 .site-nav { display: flex; gap: 28px; font-size: 16px; }
 .site-nav a { text-decoration: none; color: var(--forest-70); transition: color .2s; }
@@ -236,6 +238,11 @@ img, svg { display: block; }
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
+/* Condition suggestions: one row per disease, other names underneath, recruiting count on the right. */
+.combo-menu .sug { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.combo-menu .sug-sub { padding-left: 16px; }
+.combo-menu .sug-aka { margin-left: 0; max-width: 320px; white-space: normal; line-height: 1.35; }
+.combo-menu .sug-n { flex: none; align-self: center; font-variant-numeric: tabular-nums; }
 .combo-menu .combo-note { cursor: default; color: var(--forest-50); font-size: 14px; }
 .combo-menu .combo-note:hover { background: none; }
 
@@ -967,6 +974,8 @@ html:has(.brief-root:not([hidden])) .drawer-backdrop { opacity: 0; }
 .site-list .site-contact { margin-top: 6px; font-size: 14px; }
 .site-list .site-contact a { color: var(--link); text-decoration: none; }
 .where-note { margin: 0 0 18px; color: var(--forest-70); font-size: 16px; }
+.where-note + .where-note { margin-top: -10px; }
+.wider-note a { color: var(--link); text-underline-offset: 3px; }
 
 /* Who's running it */
 .who-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
@@ -1016,7 +1025,7 @@ html:has(.brief-root:not([hidden])) .drawer-backdrop { opacity: 0; }
 .dl-row dd { margin: 4px 0 0; font-size: 16px; color: var(--forest); }
 
 .loading-page { padding: 140px 0; text-align: center; color: var(--forest-70); }
-.loading-page .brand-mark { width: 44px; height: 44px; border-radius: 12px; margin: 0 auto 18px; animation: breathe 1.6s ease-in-out infinite; }
+.loading-page .brand-mark { width: 44px; height: 44px; margin: 0 auto 18px; animation: breathe 1.6s ease-in-out infinite; }
 .loading-page .brand-mark svg { width: 30px; height: 30px; }
 @keyframes breathe { 50% { transform: scale(.9); opacity: .7; } }
 

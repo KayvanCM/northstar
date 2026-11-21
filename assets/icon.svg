@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Northstar Compass</title>
+  <desc id="desc">A four-point slate compass needle, with a longer north point, set in a frosted glass dial on a slate tile.</desc>
+  <defs>
+    <clipPath id="tile-clip"><path d="M354 40H670C785 40 842 45 894 83C932 110 956 146 970 188C983 228 984 282 984 354V670C984 742 983 796 970 836C956 878 932 914 894 941C842 979 785 984 670 984H354C239 984 182 979 130 941C92 914 68 878 54 836C41 796 40 742 40 670V354C40 282 41 228 54 188C68 146 92 110 130 83C182 45 239 40 354 40Z"/></clipPath>
+    <linearGradient id="tile" x1="233" y1="46" x2="824" y2="1040" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EEF2F5"/><stop offset="1" stop-color="#A8B5C2"/>
+    </linearGradient>
+    <radialGradient id="overhead" cx="0" cy="0" r="1" gradientTransform="matrix(630 128 -102 500 308 75)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FAFC" stop-opacity=".55"/><stop offset=".57" stop-color="#EEF2F6" stop-opacity=".08"/><stop offset="1" stop-color="#EEF2F6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bottom-glow" cx="0" cy="0" r="1" gradientTransform="matrix(313 -516 525 318 860 937)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7F95AB" stop-opacity=".30"/><stop offset="1" stop-color="#7F95AB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tile-rim" x1="260" y1="36" x2="746" y2="987" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".85"/><stop offset=".37" stop-color="#F2F5F8" stop-opacity=".36"/><stop offset=".7" stop-color="#1A2633" stop-opacity=".24"/><stop offset="1" stop-color="#C9D3DC" stop-opacity=".45"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="388" y1="216" x2="648" y2="822" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".62"/><stop offset=".41" stop-color="#F1F4F7" stop-opacity=".30"/><stop offset=".73" stop-color="#D5DDE5" stop-opacity=".20"/><stop offset="1" stop-color="#E9EEF3" stop-opacity=".50"/>
+    </linearGradient>
+    <linearGradient id="glass-rim" x1="385" y1="210" x2="645" y2="814" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset=".25" stop-color="#F3F6F9" stop-opacity=".85"/><stop offset=".57" stop-color="#5D6F82" stop-opacity=".6"/><stop offset=".81" stop-color="#4A5C6E" stop-opacity=".4"/><stop offset="1" stop-color="#E3E9EF" stop-opacity=".9"/>
+    </linearGradient>
+    <radialGradient id="lens-light" cx="0" cy="0" r="1" gradientTransform="matrix(281 0 0 120 510 270)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".5"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="needle-edge" x1="370" y1="287" x2="670" y2="746" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4EAF0"/><stop offset=".42" stop-color="#6B7D90"/><stop offset=".77" stop-color="#141E29"/><stop offset="1" stop-color="#8A9BAC"/>
+    </linearGradient>
+    <linearGradient id="facet-main" x1="445" y1="269" x2="570" y2="758" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4A5E73"/><stop offset=".39" stop-color="#2C3E50"/><stop offset="1" stop-color="#16212C"/>
+    </linearGradient>
+    <linearGradient id="facet-bright" x1="461" y1="243" x2="529" y2="741" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A8B5C2"/><stop offset=".5" stop-color="#5E7184"/><stop offset="1" stop-color="#34495E"/>
+    </linearGradient>
+    <linearGradient id="facet-dark" x1="496" y1="385" x2="637" y2="739" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3A4D60"/><stop offset=".58" stop-color="#1F2D3B"/><stop offset="1" stop-color="#111A23"/>
+    </linearGradient>
+    <linearGradient id="shine-line" x1="444" y1="240" x2="612" y2="689" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4F7FA" stop-opacity=".9"/><stop offset=".59" stop-color="#D5DDE5" stop-opacity=".45"/><stop offset="1" stop-color="#A8B5C2" stop-opacity=".08"/>
+    </linearGradient>
+    <linearGradient id="pin" x1="508" y1="493" x2="520" y2="543" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/><stop offset=".55" stop-color="#C3CDD7"/><stop offset="1" stop-color="#6B7D90"/>
+    </linearGradient>
+    <clipPath id="needle-clip"><path d="M507 227Q512 209 517 227L573 435Q577 452 595 458L759 511Q773 516 759 521L595 576Q578 581 572 599L517 758Q512 773 507 758L452 599Q446 581 429 576L265 521Q251 516 265 511L429 458Q447 452 451 435Z"/></clipPath>
+    <filter id="tile-shadow" x="-12%" y="-12%" width="124%" height="130%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="11"/></filter>
+    <filter id="dial-shadow" x="-25%" y="-25%" width="150%" height="160%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="19"/></filter>
+    <filter id="needle-shadow" x="-35%" y="-35%" width="170%" height="175%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter id="grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="1" seed="7" stitchTiles="stitch"/>
+      <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0"/>
+      <feComponentTransfer><feFuncA type="discrete" tableValues="0 1"/></feComponentTransfer>
+    </filter>
+  </defs>
+
+  <!-- Tile -->
+  <g id="background-tile">
+    <path d="M354 40H670C785 40 842 45 894 83C932 110 956 146 970 188C983 228 984 282 984 354V670C984 742 983 796 970 836C956 878 932 914 894 941C842 979 785 984 670 984H354C239 984 182 979 130 941C92 914 68 878 54 836C41 796 40 742 40 670V354C40 282 41 228 54 188C68 146 92 110 130 83C182 45 239 40 354 40Z" transform="translate(0 10)" fill="#0E1620" opacity=".34" filter="url(#tile-shadow)"/>
+    <g clip-path="url(#tile-clip)">
+      <path d="M0 0H1024V1024H0z" fill="url(#tile)"/>
+      <path d="M0 0H1024V1024H0z" fill="url(#overhead)"/>
+      <path d="M0 0H1024V1024H0z" fill="url(#bottom-glow)"/>
+      <rect width="1024" height="1024" filter="url(#grain)" opacity=".2"/>
+      <path d="M354 40H670C785 40 842 45 894 83C932 110 956 146 970 188C983 228 984 282 984 354V670C984 742 983 796 970 836C956 878 932 914 894 941C842 979 785 984 670 984H354C239 984 182 979 130 941C92 914 68 878 54 836C41 796 40 742 40 670V354C40 282 41 228 54 188C68 146 92 110 130 83C182 45 239 40 354 40Z" fill="none" stroke="url(#tile-rim)" stroke-width="18"/>
+      <path d="M354 40H670C785 40 842 45 894 83C932 110 956 146 970 188C983 228 984 282 984 354V670C984 742 983 796 970 836C956 878 932 914 894 941C842 979 785 984 670 984H354C239 984 182 979 130 941C92 914 68 878 54 836C41 796 40 742 40 670V354C40 282 41 228 54 188C68 146 92 110 130 83C182 45 239 40 354 40Z" transform="translate(11.264 11.264) scale(.978)" fill="none" stroke="#F4F7FA" stroke-opacity=".28" stroke-width="1.4"/>
+    </g>
+  </g>
+
+  <!-- The bezel is a single glass plate, with one directional highlight rather than heavy tick marks. -->
+  <g id="frosted-compass-dial">
+    <circle cx="512" cy="538" r="294" fill="#16212C" opacity=".32" filter="url(#dial-shadow)"/>
+    <circle cx="512" cy="513" r="297" fill="url(#glass)" stroke="url(#glass-rim)" stroke-width="7"/>
+    <circle cx="512" cy="513" r="285" fill="none" stroke="#FFFFFF" stroke-opacity=".28" stroke-width="2"/>
+    <circle cx="512" cy="513" r="292" fill="url(#lens-light)"/>
+    <path d="M265 373A284 284 0 0 1 478 231" fill="none" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="3" stroke-linecap="round"/>
+    <path d="M693 738a289 289 0 0 1-188 64" fill="none" stroke="#E9EEF3" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Four planes meet at the pin. The silhouette stays legible even at favicon sizes. -->
+  <g id="slate-needle">
+    <path d="M507 227Q512 209 517 227L573 435Q577 452 595 458L759 511Q773 516 759 521L595 576Q578 581 572 599L517 758Q512 773 507 758L452 599Q446 581 429 576L265 521Q251 516 265 511L429 458Q447 452 451 435Z" transform="translate(1 16)" fill="#0E1620" opacity=".45" filter="url(#needle-shadow)"/>
+    <path d="M507 227Q512 209 517 227L573 435Q577 452 595 458L759 511Q773 516 759 521L595 576Q578 581 572 599L517 758Q512 773 507 758L452 599Q446 581 429 576L265 521Q251 516 265 511L429 458Q447 452 451 435Z" fill="url(#facet-main)"/>
+    <g clip-path="url(#needle-clip)">
+      <path d="M512 207 512 516 250 516 438 454Z" fill="url(#facet-bright)"/>
+      <path d="M512 207 584 455 774 516 512 516Z" fill="url(#facet-dark)"/>
+      <path d="M512 516 774 516 583 581 512 775Z" fill="#1A2633"/>
+      <path d="M250 516H512V775L444 582Z" fill="url(#facet-main)"/>
+      <path d="M512 516 443 455 250 516 430 519Z" fill="#8A9BAC" opacity=".5"/>
+      <path d="M512 516 581 453 774 516 601 517Z" fill="#6B7D90" opacity=".45"/>
+      <path d="M512 222v519M279 516h463" fill="none" stroke="url(#shine-line)" stroke-width="2.1"/>
+    </g>
+    <path d="M507 227Q512 209 517 227L573 435Q577 452 595 458L759 511Q773 516 759 521L595 576Q578 581 572 599L517 758Q512 773 507 758L452 599Q446 581 429 576L265 521Q251 516 265 511L429 458Q447 452 451 435Z" fill="none" stroke="url(#needle-edge)" stroke-width="3.2" stroke-linejoin="round"/>
+    <circle cx="512" cy="516" r="24" fill="#16212C" stroke="#A8B5C2" stroke-opacity=".7" stroke-width="1.7"/>
+    <circle cx="512" cy="515" r="16" fill="url(#pin)"/>
+    <path d="M502 509q7-7 16-3" stroke="#FFFFFF" stroke-opacity=".85" stroke-width="2" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>

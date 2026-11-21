@@ -79,10 +79,106 @@ async function api(path, params = {}) {
 
 // Multi-word conditions search as an exact phrase. As loose words, "cervical cancer" also matches
 // every other cancer and anything "cervical" (neck, spine), about 5 off-topic studies for each good one.
-const isPhrase = q => /\s/.test(q.trim()) && !/["()]|\b(AND|OR|NOT)\b/.test(q);
+const isPhrase = q => { const t = searchTerm(q); return /\s/.test(t) && !/["()]|\b(AND|OR|NOT)\b/.test(t); };
 function condQuery(q, loose = false) {
-  const t = (q ?? '').trim();
+  const t = searchTerm(q);
   return !loose && isPhrase(t) ? `"${t}"` : t;
+}
+
+/* ---------- One disease, many labels ----------
+   CT.gov's condition suggestions list one disease several ways: "Type 1 Diabetes", "Type 1 Diabetes Mellitus",
+   "Type 1 Diabetes (T1D)", "Type 1 Diabetes Mellitus (T1DM)". Its search already treats the plain names as one
+   (163 recruiting US studies each, Nov 2026), but a label with an abbreviation in parentheses searched as typed
+   found only 11. So searches drop the abbreviation, and suggestions that name the same disease share one row.
+   Abbreviations are not added to searches: "AD" also matches atopic dermatitis. */
+const ABBR_RE = /\s*\(([^()\s]{1,12})\)/g; // (T1D), (NSCLC), (COVID-19): short, no spaces, 2+ capitals
+// T1D, T1DM and AD abbreviate the words before them; NSCLC after "Lung Cancer" names a narrower disease, so it stays.
+function abbreviates(abbr, words) {
+  const initials = words.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(w => (/^\d+$/.test(w) ? w : w[0])).join('');
+  const letters = abbr.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let i = 0;
+  for (const ch of initials) if (ch === letters[i]) i++;
+  return letters.length >= 2 && i === letters.length;
+}
+function condParts(label) {
+  const clean = unescapeMd(label ?? '').replace(/\s+/g, ' ').replace(/([a-z]) s\b/gi, "$1's").replace(/(\S)\(/g, '$1 (').trim();
+  const abbrs = [];
+  const base = clean.replace(/\s*\(([^()]+)\)/g, (m, inner) => (nameTokens(inner).length ? m : ' ')) // "(Disorder)" adds nothing
+    .replace(ABBR_RE, (m, a, at) => ((a.match(/[A-Z]/g) || []).length >= 2 && abbreviates(a, clean.slice(0, at)) ? (abbrs.push(a), ' ') : m))
+    .replace(/,\s*([A-Z][A-Z0-9-]{1,9})$/, (m, a, at, str) => (abbreviates(a, str.slice(0, at)) ? (abbrs.push(a), '') : m)) // "Multiple Sclerosis, MS"
+    .replace(/\s+/g, ' ').trim();
+  return { clean, base: base || clean, abbrs };
+}
+function searchTerm(q) { return condParts(q).base; }
+// Words that don't change which disease a name means.
+const NAME_FILLER = new Set(['mellitus', 'disease', 'diseases', 'disorder', 'disorders', 's', 'of', 'the']);
+function nameTokens(s) {
+  return s.toLowerCase().replace(/['’]s\b/g, '').replace(/([a-z])[\s-]+(\d)/g, '$1$2')
+    .replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w && !NAME_FILLER.has(w));
+}
+const nameKey = s => nameTokens(s).sort().join(' ');
+// Spelling-only differences don't earn an "Also called": Alzheimer's/Alzheimer, Crohns/Crohn, case, punctuation.
+const looseSpelling = s => s.toLowerCase().replace(/['’]s\b/g, '').split(/[^a-z0-9]+/).filter(Boolean).map(w => w.replace(/s$/, '')).join('');
+
+function newGroup(parts) {
+  const tokens = nameTokens(parts.base);
+  return { label: parts.base, names: [parts.base], abbrs: [...parts.abbrs], tokens, key: [...tokens].sort().join(' '), joined: tokens.join(''), count: null, depth: 0 };
+}
+function absorb(into, g) {
+  into.names.push(...g.names); into.abbrs.push(...g.abbrs);
+}
+// Other names worth showing: spelling variants of the main label ("Alzheimer s Disease") are dropped.
+function akaOf(g) {
+  const seen = new Set([looseSpelling(g.label)]), out = [];
+  for (const n of g.names) { const k = looseSpelling(n); if (!seen.has(k)) { seen.add(k); out.push(n); } }
+  for (const a of g.abbrs) { const k = a.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(a); } }
+  return out;
+}
+function groupNames(labels) {
+  const groups = [];
+  for (const raw of labels) {
+    const parts = condParts(raw), g = newGroup(parts);
+    if (!g.tokens.length) continue;
+    const same = groups.find(o => o.key === g.key);
+    if (same) absorb(same, g); else groups.push(g);
+  }
+  groups.forEach(g => { g.aka = akaOf(g); });
+  return groups;
+}
+// Once counts are in: merge variants CT.gov already treats as one ("COVID 19" / "Covid19"), then tuck
+// narrower names (more words, fewer studies) under the name they narrow.
+function settleGroups(groups) {
+  const out = [];
+  for (const g of groups) {
+    const twin = g.count > 0 && out.find(o => o.count === g.count && (o.joined.startsWith(g.joined) || g.joined.startsWith(o.joined)));
+    if (twin) absorb(twin, g); else out.push(g);
+  }
+  for (const g of out) {
+    g.aka = akaOf(g);
+    g.parent = out.filter(p => p !== g && p.count > g.count && p.tokens.every(t => g.tokens.includes(t)))
+      .sort((a, b) => b.tokens.length - a.tokens.length)[0] ?? null;
+  }
+  const ordered = [];
+  const add = (g, depth) => { g.depth = depth; ordered.push(g); out.filter(c => c.parent === g).forEach(c => add(c, 1)); };
+  out.filter(g => !g.parent).forEach(g => add(g, 0));
+  return ordered;
+}
+const countCache = new Map();
+function recruitingCount(term) {
+  if (!countCache.has(term)) countCache.set(term, api('/studies', { 'query.cond': condQuery(term), 'filter.overallStatus': 'RECRUITING', countTotal: 'true', pageSize: '1', fields: 'NCTId' })
+    .then(d => d.totalCount ?? 0).catch(() => null));
+  return countCache.get(term);
+}
+const orList = xs => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')}${xs.length > 2 ? ',' : ''} or ${xs[xs.length - 1]}`;
+function renderCondition(g) {
+  const sub = g.depth ? 'More specific' : g.aka?.length ? `Also called ${orList(g.aka)}` : '';
+  return `<span class="sug${g.depth ? ' sug-sub' : ''}"><span>${esc(g.label)}</span>${sub ? `<small class="sug-aka">${esc(sub)}</small>` : ''}</span>`
+    + (g.count != null ? `<small class="sug-n">${fmtNum(g.count)} recruiting</small>` : '');
+}
+// A narrower name's broader parent, if it has one: "Type 1 Diabetes Mellitus With Hypoglycemia" -> "Type 1 Diabetes Mellitus".
+function broaderName(term) {
+  const t = searchTerm(term).replace(/\s+(with|without|due to|secondary to|associated with)\s+.+$/i, '').replace(/[\s,]+$/, '');
+  return t && t.toLowerCase() !== searchTerm(term).toLowerCase() ? t : '';
 }
 
 /* ---------- Focused vs. broad studies ----------
@@ -92,7 +188,7 @@ function condQuery(q, loose = false) {
    its conditions do, its title says "solid tumors" or similar, or most of a long condition list is other
    diseases. Checked against 535 recruiting US studies for ovarian, cervical and breast cancer. */
 const CANCER_WORDS = /\b(cancers?|carcinomas?|neoplasms?|tumou?rs?|malignanc(?:y|ies)|adenocarcinomas?|ca)\b/g;
-const COND_STOP = new Set(['of', 'the', 'and', 'or', 'with', 'in', 'a', 'an', 'stage', 'advanced', 'recurrent', 'metastatic']);
+const COND_STOP = new Set(['of', 'the', 'and', 'or', 'with', 'in', 'a', 'an', 'stage', 'advanced', 'recurrent', 'metastatic', 'mellitus', 'disease', 'diseases', 'disorder', 'disorders']);
 const BASKET_TITLE = /solid tumou?rs?|malignancies|advanced cancers|multiple (cancer|tumou?r) types|selected tumou?rs|various cancers/i;
 // Rough stems, so "ovarian" meets "ovary" and "cervical" meets "cervix".
 const condTokens = s => (s ?? '').toLowerCase().replace(CANCER_WORDS, 'cancer').replace(/[^a-z0-9 ]+/g, ' ')
@@ -106,7 +202,8 @@ function studyFocus(term, title, conditions = []) {
   const basketTitle = BASKET_TITLE.test(title ?? '');
   // Tag text for wide studies, with or without a search term.
   const label = n >= 4 ? `Covers ${n} conditions` : basketTitle ? 'Many cancer types' : '';
-  if (!term?.trim()) return { broad: !!label, label };
+  term = searchTerm(term);
+  if (!term) return { broad: !!label, label };
   if (namesCondition(term, title)) return { broad: false, label: '' };
   const hits = conditions.filter(c => namesCondition(term, c)).length;
   const broad = !hits || basketTitle || (n >= 4 && hits / n < 0.5);
@@ -115,13 +212,17 @@ function studyFocus(term, title, conditions = []) {
 // "Ovarian Cancer" reads as "ovarian cancer" mid-sentence; acronyms like COVID stay as typed.
 const midSentence = s => (s ?? '').replace(/\b([A-Z])([a-z]+)\b/g, (_, a, b) => a.toLowerCase() + b);
 
-async function suggestConditions(q) {
+async function suggestConditions(q, update) {
   if (!q || q.length < 2) return [];
+  let labels;
   try {
     const res = await fetch(`https://clinicaltrials.gov/api/int/suggest?input=${encodeURIComponent(q)}&dictionary=Condition`);
     if (!res.ok) return [];
-    return (await res.json()).slice(0, 8);
+    labels = await res.json();
   } catch { return []; }
+  const groups = groupNames(labels.slice(0, 10)).slice(0, 8);
+  if (update) Promise.all(groups.map(g => recruitingCount(g.label).then(n => { g.count = n; }))).then(() => update(settleGroups(groups)));
+  return groups;
 }
 
 let versionPromise;
@@ -521,7 +622,7 @@ function autocomplete(input, { fetch: fetcher, render = x => esc(x), pick, minCh
     if (q.trim().length < minChars) { items = []; close(); return; }
     debounce = setTimeout(async () => {
       const mine = ++seq;
-      const res = await fetcher(q);
+      const res = await fetcher(q, later => { if (mine === seq) { items = later; active = Math.min(active, items.length - 1); paint(); } });
       if (mine !== seq) return;
       items = res; active = -1; paint();
       items.length ? open() : close();
